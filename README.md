@@ -31,4 +31,14 @@ services.AddBusinessCentral(options =>
     options.TokenEndpoint = "https://login.microsoftonline.com/{TenantId}/oauth2/v2.0/token";
     options.Scope = "https://api.businesscentral.dynamics.com/.default";
 });
+
+public class MyService
+{
+    private readonly IBusinessCentralClient _client;
+
+    public MyService(IBusinessCentralClient client)
+    {
+        _client = client;
+    }
+}
 ```
