@@ -16,7 +16,11 @@
 
 ```bash
 dotnet add package Dynamics365.BusinessCentral
+```
 
+🧩 Dependency Injection
+
+```csharp
 services.AddBusinessCentral(options =>
 {
     options.TenantId = "your-tenant-id";
@@ -27,3 +31,4 @@ services.AddBusinessCentral(options =>
     options.TokenEndpoint = "https://login.microsoftonline.com/{TenantId}/oauth2/v2.0/token";
     options.Scope = "https://api.businesscentral.dynamics.com/.default";
 });
+```
