@@ -16,3 +16,14 @@
 
 ```bash
 dotnet add package Dynamics365.BusinessCentral
+
+services.AddBusinessCentral(options =>
+{
+    options.TenantId = "your-tenant-id";
+    options.ClientId = "your-client-id";
+    options.ClientSecret = "your-client-secret";
+    options.Company = "CRONUS AG";
+    options.BaseUrl = "https://api.businesscentral.dynamics.com/v2.0/{tenant}/Production/ODataV4";
+    options.TokenEndpoint = "https://login.microsoftonline.com/{TenantId}/oauth2/v2.0/token";
+    options.Scope = "https://api.businesscentral.dynamics.com/.default";
+});
