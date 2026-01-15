@@ -3,7 +3,7 @@
   <p>A lightweight, strongly-typed client for the Dynamics 365 Business Central OData API.</p>
 </div>
 
-✨ Features
+<b>✨ Features</b>
 
 - Typed OData querying with fluent filter composition
 - Built-in OAuth2 client credentials authentication
@@ -12,13 +12,13 @@
 - Clean DI integration
 - No runtime dependencies beyond HttpClient and System.Text.Json
 
-📦 Installation
+<b>📦 Installation</b>
 
 ```bash
 dotnet add package Dynamics365.BusinessCentral
 ```
 
-🧩 Dependency Injection
+<b>🧩 Dependency Injection</b>
 
 ```csharp
 services.AddBusinessCentral(options =>
@@ -43,7 +43,7 @@ public class MyService
 }
 ```
 
-🔍 Querying
+<b>🔍 Querying</b>
 
 Simple Query
 ```csharp
@@ -85,7 +85,7 @@ await client.PatchAsync(
     new { Status = "Released" });
 ```
 
-🧪 Filters
+<b>🧪 Filters</b>
 
 | Method                  | Expression                |
 | ----------------------- | ------------------------- |
