@@ -6,14 +6,14 @@
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>0.1.0</Version>
+        <Version>0.1.1</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
         <Description>Lightweight, strongly-typed client for the Dynamics 365 Business Central OData API.</Description>
 
         <PackageTags>Dynamics365 BusinessCentral OData Client</PackageTags>
-        <PackageProjectUrl>https://github.com/kraldev/Dynamics365.BusinessCentral</PackageProjectUrl>
-        <RepositoryUrl>https://github.com/kraldev/Dynamics365.BusinessCentral</RepositoryUrl>
+        <PackageProjectUrl>https://github.com/kraldev/Dynamics365-BusinessCentral</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/kraldev/Dynamics365-BusinessCentral</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
 
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
