@@ -8,5 +8,4 @@
   <Folder Name="/test/">
     <Project Path="test/Dynamics365.BusinessCentral.Tests/Dynamics365.BusinessCentral.Tests.csproj" Id="50dec5d1-86c4-4fa7-a18a-b9e9f24fbe40" />
   </Folder>
-  <Project Path="Dynamics365.BusinessCentral.SmokeTest/Dynamics365.BusinessCentral.SmokeTest.csproj" Id="c9a25a17-20d8-485c-811f-58f17092fc3a" />
 </Solution>
