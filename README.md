@@ -42,3 +42,63 @@ public class MyService
     }
 }
 ```
+
+🔍 Querying
+
+Simple Query
+```csharp
+var orders = await client.QueryAsync<Order>("salesOrders");
+```
+
+With Filters
+```csharp
+var filter =
+    Filter.Equals("Status", "Open")
+          .And(Filter.GreaterThan("Amount", 100));
+
+var orders = await client.QueryAsync<Order>("salesOrders", filter);
+```
+
+Paging and Ordering
+```csharp
+var orders = await client.QueryAsync<Order>(
+    "salesOrders",
+    Filter.Equals("Status", "Open"),
+    o => o.WithTop(100).OrderByAsc("No"));
+```
+
+Query All
+```csharp
+var allOrders = await client.QueryAllAsync<Order>("salesOrders");
+```
+
+Raw Query
+```csharp
+var raw = await client.QueryRawAsync<JsonElement>("salesOrders?$top=5");
+```
+
+Patch
+```csharp
+await client.PatchAsync(
+    "salesOrders",
+    "No='1000'",
+    new { Status = "Released" });
+```
+
+🧪 Filters
+
+| Method                  | Expression                |
+| ----------------------- | ------------------------- |
+| `Filter.Equals`         | `field eq value`          |
+| `Filter.NotEquals`      | `field ne value`          |
+| `Filter.GreaterThan`    | `field gt value`          |
+| `Filter.GreaterOrEqual` | `field ge value`          |
+| `Filter.LessThan`       | `field lt value`          |
+| `Filter.LessOrEqual`    | `field le value`          |
+| `Filter.Contains`       | `contains(field,value)`   |
+| `Filter.StartsWith`     | `startswith(field,value)` |
+| `Filter.EndsWith`       | `endswith(field,value)`   |
+| `Filter.In`             | `field in (...)`          |
+| `Filter.IsNull`         | `field eq null`           |
+| `Filter.IsNotNull`      | `field ne null`           |
+
