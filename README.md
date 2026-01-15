@@ -102,3 +102,27 @@ await client.PatchAsync(
 | `Filter.IsNull`         | `field eq null`           |
 | `Filter.IsNotNull`      | `field ne null`           |
 
+Example
+```csharp
+public static class SmokeTestEndpoints
+{
+    public static void MapSmokeTests(this WebApplication app)
+    {
+        app.MapGet("/bc/orders", async (IBusinessCentralClient client) =>
+        {
+            var orders = await client.QueryAsync<dynamic>(
+                "LDATProductionOrd1er",
+                Filter.Equals("Status", "Released"),
+                o => o.WithTop(5));
+
+            return Results.Ok(orders);
+        });
+
+        app.MapGet("/bc/orders/all", async (IBusinessCentralClient client) =>
+        {
+            var orders = await client.QueryAllAsync<dynamic>("salesOrders");
+            return Results.Ok(orders.Count);
+        });
+    }
+}
+```
