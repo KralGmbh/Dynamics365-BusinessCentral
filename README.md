@@ -1,6 +1,7 @@
 <div align="center">
   <h1>Dynamics365.BusinessCentral</h1>
   <p>A lightweight, strongly-typed client for the Dynamics 365 Business Central OData API.</p>
+  <p style="font-size:7px;">Powered by <a href="https://kral.at" target="_blank">KRAL GmbH</a></p>
 </div>
 
 <b>✨ Features</b>
