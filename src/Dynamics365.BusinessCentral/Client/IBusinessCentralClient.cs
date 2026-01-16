@@ -71,13 +71,13 @@ public interface IBusinessCentralClient
     /// </summary>
     /// <typeparam name="TPayload">The payload type to serialize as the PATCH body.</typeparam>
     /// <param name="path">Relative OData entity path.</param>
-    /// <param name="keyFilter">Entity key expression (e.g. "id=123").</param>
+    /// <param name="systemId">The Business Central systemId property.</param>
     /// <param name="payload">Object to serialize and send as the PATCH body.</param>
     /// <param name="ifMatch">ETag value for optimistic concurrency control (default "*").</param>
     /// <param name="ct">Cancellation token.</param>
     Task PatchAsync<TPayload>(
         string path,
-        string keyFilter,
+        string systemId,
         TPayload payload,
         string ifMatch = "*",
         CancellationToken ct = default);

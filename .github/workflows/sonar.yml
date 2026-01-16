@@ -1,0 +1,34 @@
+name: .NET
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 10.0.x
+
+      
+    - name: Use .NET Build, Test, SonarCloud check and Publish Action
+      uses: ArtyProf/dotnet-build-test-publish-action@v1.2.0
+      with:
+        sonar-project-key: ${{ secrets.SONAR_PROJECT_KEY }} # Optional, default is ' '
+        sonar-token: ${{ secrets.SONAR_TOKEN }} # Optional, default is ' '
+        sonar-organization: ${{ secrets.SONAR_ORGANIZATION }} # Optional, default is ' '
+        #sonar-host-url: ${{ secrets.SONAR_HOST }} # Optional, default is 'https://sonarcloud.io'
+        dotnet-solution-path: 'Dynamics365.BusinessCentral.slnx' # Optional, default is ' ' (root)
+        dotnet-version: '10.x' # Optional, default is '8.x'
+        is-need-publish: 'true' # Optional, default is ' '

@@ -146,14 +146,14 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
 
     public async Task PatchAsync<TPayload>(
         string path,
-        string keyFilter,
+        string systemId,
         TPayload payload,
         string ifMatch = "*",
         CancellationToken ct = default)
     {
         var token = await GetTokenAsync(ct);
 
-        var url = $"{_options.BaseUrl}/Company('{_options.Company}')/{path}({keyFilter})";
+        var url = $"{_options.BaseUrl}/Company('{_options.Company}')/{path}({systemId})";
         var req = new HttpRequestMessage(HttpMethod.Patch, url);
 
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
