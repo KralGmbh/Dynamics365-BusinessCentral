@@ -1,10 +1,7 @@
-<div align="center">
-  <h1>Dynamics365.BusinessCentral</h1>
-  <p>A lightweight, strongly-typed client for the Dynamics 365 Business Central OData API.</p>
-  <p style="font-size:7px;">Powered by <a href="https://kral.at" target="_blank">KRAL GmbH</a></p>
-</div>
+# Dynamics365.BusinessCentral
+*A lightweight, strongly-typed client for the Dynamics 365 Business Central OData API.*
 
-<b>✨ Features</b>
+# ✨ Features
 
 - Typed OData querying with fluent filter composition
 - Built-in OAuth2 client credentials authentication
@@ -13,13 +10,13 @@
 - Clean DI integration
 - No runtime dependencies beyond HttpClient and System.Text.Json
 
-<b>📦 Installation</b>
+# 📦 Installation
 
 ```bash
 dotnet add package Dynamics365.BusinessCentral
 ```
 
-<b>🧩 Dependency Injection</b>
+# 🧩 Dependency Injection
 
 ```csharp
 services.AddBusinessCentral(options =>
@@ -44,7 +41,7 @@ public class MyService
 }
 ```
 
-<b>🔍 Querying</b>
+# 🔍 Querying
 
 Simple Query
 ```csharp
@@ -86,7 +83,7 @@ await client.PatchAsync(
     new { Status = "Released" });
 ```
 
-<b>🧪 Filters</b>
+# 🧪 Filters
 
 | Method                  | Expression                |
 | ----------------------- | ------------------------- |
@@ -103,7 +100,7 @@ await client.PatchAsync(
 | `Filter.IsNull`         | `field eq null`           |
 | `Filter.IsNotNull`      | `field ne null`           |
 
-Example
+# Example
 ```csharp
 public static class SmokeTestEndpoints
 {
