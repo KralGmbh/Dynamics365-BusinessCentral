@@ -7,7 +7,7 @@
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>0.1.4</Version>
+        <Version>0.1.5</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
 
@@ -28,6 +28,10 @@
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
 
         <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+
+        <Title>Dynamics365 Business Central</Title>
+
+        <PackageIcon>bcclient.png</PackageIcon>
     </PropertyGroup>
 
     <ItemGroup>
@@ -36,7 +40,15 @@
     </ItemGroup>
 
     <ItemGroup>
-        <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+        <None Include="..\..\README.md"
+              Pack="true"
+              PackagePath="\" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="..\..\assets\bcclient.png"
+              Pack="true"
+              PackagePath="\" />
     </ItemGroup>
 
 </Project>
