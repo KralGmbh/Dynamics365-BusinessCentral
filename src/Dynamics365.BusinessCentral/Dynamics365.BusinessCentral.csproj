@@ -6,7 +6,7 @@
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>0.1.1</Version>
+        <Version>0.1.3</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
         <Description>Lightweight, strongly-typed client for the Dynamics 365 Business Central OData API.</Description>

@@ -33,7 +33,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         Action<QueryOptions>? options = null,
         IEnumerable<string>? select = null,
         CancellationToken ct = default)
-        => QueryAsync<TEntity>(path, filter?.Value ?? "true", options, select, ct);
+        => QueryAsync<TEntity>(path, filter?.Value ?? string.Empty, options, select, ct);
 
     public async Task<List<TEntity>> QueryAsync<TEntity>(
         string path,
@@ -174,46 +174,84 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         IEnumerable<string>? select,
         CancellationToken ct)
     {
-        async Task<HttpRequestMessage> CreateRequestAsync()
+        const int maxRetries = 1;
+
+        for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
-            var token = await GetTokenAsync(ct);
+            var isRetry = attempt > 0;
 
-            var url = $"{_options.BaseUrl}/Company('{_options.Company}')/{path}?$filter={Uri.EscapeDataString(filter)}";
+            if (isRetry)
+                await InvalidateTokenAsync(ct);
 
-            if (select != null)
-                url += "&$select=" + string.Join(",", select.Select(Uri.EscapeDataString));
-            if (options.Top != null)
-                url += "&$top=" + options.Top;
-            if (options.Skip != null)
-                url += "&$skip=" + options.Skip;
-            if (options.OrderBy != null)
-                url += "&$orderby=" + Uri.EscapeDataString(options.OrderBy);
+            var req = await CreateRequestAsync(path, filter, options, select, ct);
+            var res = await _http.SendAsync(req, ct);
 
-            var req = new HttpRequestMessage(HttpMethod.Get, url);
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            return req;
-        }
+            res.RequestMessage ??= req;
 
-        var req = await CreateRequestAsync();
-        var res = await _http.SendAsync(req, ct);
-        res.RequestMessage ??= req;
+            if (res.StatusCode == HttpStatusCode.Unauthorized && !isRetry)
+                continue;
 
-        if (res.StatusCode == HttpStatusCode.Unauthorized)
-        {
-            _token = null;
-
-            var retryReq = await CreateRequestAsync();
-            res = await _http.SendAsync(retryReq, ct);
-            res.RequestMessage ??= retryReq;
-
-            if (res.StatusCode == HttpStatusCode.Unauthorized)
+            if (!res.IsSuccessStatusCode)
                 throw await CreateExceptionAsync(res, ct);
+
+            return res;
         }
 
-        if (!res.IsSuccessStatusCode)
-            throw await CreateExceptionAsync(res, ct);
+        throw new InvalidOperationException("Unexpected state in SendAsync");
+    }
 
-        return res;
+    private async Task<HttpRequestMessage> CreateRequestAsync(
+        string path,
+        string filter,
+        QueryOptions options,
+        IEnumerable<string>? select,
+        CancellationToken ct)
+    {
+        var token = await GetTokenAsync(ct);
+        var url = BuildUrl(path, filter, options, select);
+
+        var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        return req;
+    }
+
+    private string BuildUrl(
+        string path,
+        string filter,
+        QueryOptions options,
+        IEnumerable<string>? select)
+    {
+        var url = $"{_options.BaseUrl}/Company('{_options.Company}')/{path}";
+
+        var query = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(filter) && filter != "true")
+            query.Add("$filter=" + Uri.EscapeDataString(filter));
+
+        if (select != null)
+            query.Add("$select=" + string.Join(",", select.Select(Uri.EscapeDataString)));
+
+        if (options.Top != null)
+            query.Add("$top=" + options.Top);
+
+        if (options.Skip != null)
+            query.Add("$skip=" + options.Skip);
+
+        if (options.OrderBy != null)
+            query.Add("$orderby=" + Uri.EscapeDataString(options.OrderBy));
+
+        if (query.Count > 0)
+            url += "?" + string.Join("&", query);
+
+        return url;
+    }
+
+    private async Task InvalidateTokenAsync(CancellationToken ct)
+    {
+        await _tokenLock.WaitAsync(ct);
+        try { _token = null; }
+        finally { _tokenLock.Release(); }
     }
 
     private async Task<string> GetTokenAsync(CancellationToken ct)
@@ -228,6 +266,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
                 return _token.Token;
 
             var endpoint = _options.TokenEndpoint.Replace("{TenantId}", _options.TenantId);
+
             var body = new StringContent(
                 $"client_id={_options.ClientId}&client_secret={_options.ClientSecret}&scope={_options.Scope}&grant_type=client_credentials",
                 Encoding.UTF8,

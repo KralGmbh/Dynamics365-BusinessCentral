@@ -131,7 +131,7 @@ public class ClientTests
         // Arrange
         var client = TestBase.CreateClient(_ => throw new TaskCanceledException());
         var cts = new CancellationTokenSource();
-        cts.Cancel();
+        await cts.CancelAsync();
 
         // Act / Assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
