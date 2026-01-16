@@ -1,11 +1,4 @@
 <Solution>
-  <Folder Name="/assets/">
-    <File Path="../../../Desktop/bcclient.png" />
-    <File Path="../../../Desktop/bcclient_64p.png" />
-  </Folder>
-  <Folder Name="/docs/">
-    <File Path="README.md" />
-  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Dynamics365.BusinessCentral/Dynamics365.BusinessCentral.csproj" />
   </Folder>
