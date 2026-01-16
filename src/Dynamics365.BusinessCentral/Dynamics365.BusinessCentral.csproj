@@ -2,13 +2,12 @@
 
     <PropertyGroup>
         <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
-        <TargetFramework Condition="'$(GITHUB_ACTIONS)' == 'true' AND '$(TargetFrameworks)' != ''">net8.0</TargetFramework>
         
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>0.1.7</Version>
+        <Version>0.1.8</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
 

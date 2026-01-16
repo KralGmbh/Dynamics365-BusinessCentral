@@ -1,34 +1,58 @@
-name: .NET
+name: SonarCloud
 
 on:
   push:
     branches: [ "master" ]
   pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
+    types: [ opened, synchronize, reopened ]
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: 10.0.x
+      - uses: actions/checkout@v4
 
-      
-    - name: Use .NET Build, Test, SonarCloud check and Publish Action
-      uses: ArtyProf/dotnet-build-test-publish-action@v1.2.0
-      with:
-        sonar-project-key: ${{ secrets.SONAR_PROJECT_KEY }} # Optional, default is ' '
-        sonar-token: ${{ secrets.SONAR_TOKEN }} # Optional, default is ' '
-        sonar-organization: ${{ secrets.SONAR_ORGANIZATION }} # Optional, default is ' '
-        #sonar-host-url: ${{ secrets.SONAR_HOST }} # Optional, default is 'https://sonarcloud.io'
-        dotnet-solution-path: 'Dynamics365.BusinessCentral.slnx' # Optional, default is ' ' (root)
-        dotnet-version: '10.x' # Optional, default is '8.x'
-        is-need-publish: 'true' # Optional, default is ' '
+      - name: Set up Java for SonarCloud
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'microsoft'
+          java-version: '21'
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore Dynamics365.BusinessCentral.slnx
+
+      - name: Build
+        run: dotnet build Dynamics365.BusinessCentral.slnx --no-restore -c Release -f net8.0
+
+      - name: Test
+        run: dotnet test Dynamics365.BusinessCentral.slnx --no-build -c Release -f net8.0
+
+      - name: Install Sonar tools
+        run: |
+          dotnet tool install --global dotnet-sonarscanner
+          dotnet tool install --global dotnet-coverage
+
+      - name: Run SonarCloud analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          dotnet sonarscanner begin \
+            /k:"${{ secrets.SONAR_PROJECT_KEY }}" \
+            /o:"${{ secrets.SONAR_ORGANIZATION }}" \
+            /d:sonar.token="$SONAR_TOKEN" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.cs.vscoveragexml.reportsPaths=coverage.xml
+
+          dotnet build Dynamics365.BusinessCentral.slnx --no-incremental -c Release -f net8.0
+
+          dotnet-coverage collect \
+            "dotnet test Dynamics365.BusinessCentral.slnx -c Release -f net8.0 --no-build" \
+            -f xml -o coverage.xml
+
+          dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
