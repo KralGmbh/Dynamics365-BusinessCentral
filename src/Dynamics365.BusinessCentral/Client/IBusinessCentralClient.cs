@@ -15,13 +15,13 @@ public interface IBusinessCentralClient
     /// <param name="filter">Optional strongly-typed OData filter expression.</param>
     /// <param name="options">Optional query options such as paging or ordering.</param>
     /// <param name="select">Optional list of fields to select.</param>
-    /// <param name="ct">Cancellation token.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task<List<TEntity>> QueryAsync<TEntity>(
         string path,
         ODataFilter? filter = null,
         Action<QueryOptions>? options = null,
         IEnumerable<string>? select = null,
-        CancellationToken ct = default);
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Executes an OData query using a raw $filter string and returns the matching entities.
@@ -31,13 +31,13 @@ public interface IBusinessCentralClient
     /// <param name="filter">Raw OData $filter expression.</param>
     /// <param name="options">Optional query options such as paging or ordering.</param>
     /// <param name="select">Optional list of fields to select.</param>
-    /// <param name="ct">Cancellation token.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task<List<TEntity>> QueryAsync<TEntity>(
         string path,
         string filter,
         Action<QueryOptions>? options = null,
         IEnumerable<string>? select = null,
-        CancellationToken ct = default);
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Executes an OData query and retrieves all matching entities by automatically paging through the result set.
@@ -47,23 +47,23 @@ public interface IBusinessCentralClient
     /// <param name="filter">Optional strongly-typed OData filter expression.</param>
     /// <param name="options">Optional query options such as page size or ordering.</param>
     /// <param name="select">Optional list of fields to select.</param>
-    /// <param name="ct">Cancellation token.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task<List<TEntity>> QueryAllAsync<TEntity>(
         string path,
         ODataFilter? filter = null,
         Action<QueryOptions>? options = null,
         IEnumerable<string>? select = null,
-        CancellationToken ct = default);
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Executes a raw GET request against the given relative OData URL and deserializes the full response.
     /// </summary>
     /// <typeparam name="TResponse">The type to deserialize the response body into.</typeparam>
     /// <param name="path">Relative OData URL including any query parameters.</param>
-    /// <param name="ct">Cancellation token.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task<TResponse> QueryRawAsync<TResponse>(
         string path,
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
         where TResponse : class;
 
     /// <summary>
@@ -74,11 +74,13 @@ public interface IBusinessCentralClient
     /// <param name="systemId">The Business Central systemId property.</param>
     /// <param name="payload">Object to serialize and send as the PATCH body.</param>
     /// <param name="ifMatch">ETag value for optimistic concurrency control (default "*").</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task PatchAsync<TPayload>(
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<TResponse> PatchAsync<TPayload, TResponse>(
         string path,
         string systemId,
         TPayload payload,
         string ifMatch = "*",
-        CancellationToken ct = default);
+        CancellationToken cancellationToken = default)
+        where TResponse : class;
+
 }

@@ -4,7 +4,7 @@ using System.Net;
 
 namespace Dynamics365.BusinessCentral.Tests;
 
-public class AdditionalClientTests
+public class ClientTests
 {
     #region QueryRawAsync Tests
 
@@ -184,19 +184,26 @@ public class AdditionalClientTests
                 };
 
             capturedRequest = req;
-            return new HttpResponseMessage(HttpStatusCode.OK);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"test-id\",\"name\":\"Updated\"}")
+            };
         });
 
-        var payload = new { Name = "Updated" };
+        var payload = new TestPatchPayload { Name = "Updated" };
 
         // Act
-        await client.PatchAsync("orders", "test-id", payload);
+        var result = await client.PatchAsync<TestPatchPayload, TestPatchResponse>("orders", "test-id", payload);
 
         // Assert
         Assert.NotNull(capturedRequest);
         Assert.Equal(HttpMethod.Patch, capturedRequest.Method);
         Assert.Contains("test-id", capturedRequest.RequestUri!.ToString());
         Assert.True(capturedRequest.Headers.Contains("If-Match"));
+
+        Assert.NotNull(result);
+        Assert.Equal("test-id", result!.Id);
+        Assert.Equal("Updated", result.Name);
     }
 
     [Fact]
@@ -213,18 +220,22 @@ public class AdditionalClientTests
                 };
 
             capturedRequest = req;
-            return new HttpResponseMessage(HttpStatusCode.OK);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"test-id\",\"name\":\"Updated\"}")
+            };
         });
 
-        var payload = new { Name = "Updated" };
+        var payload = new TestPatchPayload { Name = "Updated" };
 
         // Act
-        await client.PatchAsync("orders", "test-id", payload, "W/\"etag-123\"");
+        var result = await client.PatchAsync<TestPatchPayload, TestPatchResponse>("orders", "test-id", payload, "W/\"etag-123\"");
 
         // Assert
         Assert.NotNull(capturedRequest);
         var ifMatchValues = capturedRequest.Headers.GetValues("If-Match");
         Assert.Contains("W/\"etag-123\"", ifMatchValues);
+        Assert.Equal("Updated", result.Name);
     }
 
     [Fact]
@@ -247,7 +258,7 @@ public class AdditionalClientTests
 
         // Act
         var ex = await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
-            client.PatchAsync("orders", "test-id", new { Name = "Test" }));
+            client.PatchAsync<TestPatchPayload, TestPatchResponse>("orders", "test-id", new TestPatchPayload { Name = "Test" }));
 
         // Assert
         Assert.Equal(HttpStatusCode.BadRequest, ex.StatusCode);
@@ -267,16 +278,17 @@ public class AdditionalClientTests
                 };
 
             capturedBody = req.Content == null ? null : req.Content.ReadAsStringAsync().Result;
-            return new HttpResponseMessage(HttpStatusCode.OK);
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
         });
 
-        var payload = new { Name = "Updated" };
+        var payload = new TestPatchPayload { Name = "Updated" };
 
         // Act
-        await client.PatchAsync("orders", "test-id", payload);
+        var result = await client.PatchAsync<TestPatchPayload, TestPatchResponse>("orders", "test-id", payload);
 
         // Assert
         Assert.Equal("{\"Name\":\"Updated\"}", capturedBody);
+        Assert.Null(result);
     }
 
     #endregion
@@ -1169,6 +1181,17 @@ public class AdditionalClientTests
     private sealed class TestRawResponse
     {
         public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+    }
+
+    private sealed class TestPatchPayload
+    {
+        public string Name { get; set; } = string.Empty;
+    }
+
+    private sealed class TestPatchResponse
+    {
+        public string Id { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
     }
 
