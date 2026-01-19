@@ -146,13 +146,13 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         return all;
     }
 
-    public async Task<TResponse> PatchAsync<TPayload, TResponse>(
+    public async Task<T> PatchAsync<T>(
         string path,
         string systemId,
-        TPayload payload,
+        T payload,
         string ifMatch = "*",
         CancellationToken cancellationToken = default)
-        where TResponse : class
+        where T : class
     {
         var token = await GetTokenAsync(cancellationToken);
 
@@ -179,7 +179,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
 
         var json = await res.Content.ReadAsStringAsync(cancellationToken);
 
-        return JsonSerializer.Deserialize<TResponse>(json, _jsonOptions)
+        return JsonSerializer.Deserialize<T>(json, _jsonOptions)
                ?? throw new BusinessCentralServerException(
                    "Failed to deserialize PATCH response.",
                    res.StatusCode,
@@ -344,6 +344,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         };
     }
 
+    
     private sealed class ODataWrapper<T>
     {
         [JsonPropertyName("value")]

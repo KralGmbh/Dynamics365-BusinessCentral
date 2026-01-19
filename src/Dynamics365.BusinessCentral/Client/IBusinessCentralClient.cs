@@ -75,12 +75,13 @@ public interface IBusinessCentralClient
     /// <param name="payload">Object to serialize and send as the PATCH body.</param>
     /// <param name="ifMatch">ETag value for optimistic concurrency control (default "*").</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<TResponse> PatchAsync<TPayload, TResponse>(
+    Task<T> PatchAsync<T>(
         string path,
         string systemId,
-        TPayload payload,
+        T payload,
         string ifMatch = "*",
         CancellationToken cancellationToken = default)
-        where TResponse : class;
+        where T : class;
+
 
 }

@@ -1,6 +1,7 @@
 ﻿using Dynamics365.BusinessCentral.Errors;
 using Dynamics365.BusinessCentral.OData;
 using System.Net;
+using System.Text.Json;
 
 namespace Dynamics365.BusinessCentral.Tests;
 
@@ -190,10 +191,10 @@ public class ClientTests
             };
         });
 
-        var payload = new TestPatchPayload { Name = "Updated" };
+        var payload = new TestPatchEntity { Id = "test-id", Name = "Updated" };
 
         // Act
-        var result = await client.PatchAsync<TestPatchPayload, TestPatchResponse>("orders", "test-id", payload);
+        var result = await client.PatchAsync<TestPatchEntity>("orders", "test-id", payload);
 
         // Assert
         Assert.NotNull(capturedRequest);
@@ -226,10 +227,10 @@ public class ClientTests
             };
         });
 
-        var payload = new TestPatchPayload { Name = "Updated" };
+        var payload = new TestPatchEntity { Id = "test-id", Name = "Updated" };
 
         // Act
-        var result = await client.PatchAsync<TestPatchPayload, TestPatchResponse>("orders", "test-id", payload, "W/\"etag-123\"");
+        var result = await client.PatchAsync<TestPatchEntity>("orders", "test-id", payload, "W/\"etag-123\"");
 
         // Assert
         Assert.NotNull(capturedRequest);
@@ -258,7 +259,7 @@ public class ClientTests
 
         // Act
         var ex = await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
-            client.PatchAsync<TestPatchPayload, TestPatchResponse>("orders", "test-id", new TestPatchPayload { Name = "Test" }));
+            client.PatchAsync<TestPatchEntity>("orders", "test-id", new TestPatchEntity { Id = "test-id", Name = "Test" }));
 
         // Assert
         Assert.Equal(HttpStatusCode.BadRequest, ex.StatusCode);
@@ -281,13 +282,17 @@ public class ClientTests
             return new HttpResponseMessage(HttpStatusCode.NoContent);
         });
 
-        var payload = new TestPatchPayload { Name = "Updated" };
+        var payload = new TestPatchEntity { Id = "test-id", Name = "Updated" };
 
         // Act
-        var result = await client.PatchAsync<TestPatchPayload, TestPatchResponse>("orders", "test-id", payload);
+        var result = await client.PatchAsync<TestPatchEntity>("orders", "test-id", payload);
 
         // Assert
-        Assert.Equal("{\"Name\":\"Updated\"}", capturedBody);
+        Assert.NotNull(capturedBody);
+        using var doc = JsonDocument.Parse(capturedBody!);
+        var root = doc.RootElement;
+        Assert.Equal("test-id", root.GetProperty("Id").GetString());
+        Assert.Equal("Updated", root.GetProperty("Name").GetString());
         Assert.Null(result);
     }
 
@@ -1184,12 +1189,7 @@ public class ClientTests
         public string Name { get; set; } = string.Empty;
     }
 
-    private sealed class TestPatchPayload
-    {
-        public string Name { get; set; } = string.Empty;
-    }
-
-    private sealed class TestPatchResponse
+    private sealed class TestPatchEntity
     {
         public string Id { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
