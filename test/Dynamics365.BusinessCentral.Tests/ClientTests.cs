@@ -7,7 +7,7 @@ using System.Text.Json;
 
 namespace Dynamics365.BusinessCentral.Tests;
 
-public class ClientTests
+public partial class ClientTests
 {
     #region QueryRawAsync Tests
 
@@ -36,7 +36,7 @@ public class ClientTests
     }
 
     [Fact]
-    public async Task QueryRawAsync_Throws_On_Invalid_Json()
+    public async Task QueryRawAsync_Throws_ServerException_On_Invalid_Json()
     {
         var client = TestBase.CreateClient(req =>
         {
@@ -52,12 +52,17 @@ public class ClientTests
             };
         });
 
-        await Assert.ThrowsAsync<JsonException>(() =>
+        var ex = await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
             client.QueryRawAsync<TestRawResponse>("orders/raw"));
+
+        Assert.Equal(HttpStatusCode.OK, ex.StatusCode);
+        Assert.Contains("Failed to deserialize", ex.Message);
+        Assert.Contains("invalid json", ex.ResponseBody);
     }
 
+
     [Fact]
-    public async Task QueryRawAsync_Throws_On_Null_Response()
+    public async Task QueryRawAsync_Throws_ServerException_On_Null_Response()
     {
         var client = TestBase.CreateClient(req =>
         {
@@ -73,9 +78,14 @@ public class ClientTests
             };
         });
 
-        await Assert.ThrowsAsync<JsonException>(() =>
+        var ex = await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
             client.QueryRawAsync<TestRawResponse>("orders/raw"));
+
+        Assert.Equal(HttpStatusCode.OK, ex.StatusCode);
+        Assert.Contains("Failed to deserialize", ex.Message);
+        Assert.Contains("null", ex.ResponseBody);
     }
+
 
     [Fact]
     public async Task QueryRawAsync_Throws_NotFoundException_On_404()
@@ -1615,34 +1625,7 @@ public class ClientTests
 
     #endregion
 
-
-
     #region Test Helper Classes
-
-    private sealed class RealBcEntity
-    {
-        public int EntryNo { get; set; }
-        public string ItemNo { get; set; } = string.Empty;
-        public string SerialNo { get; set; } = string.Empty;
-    }
-
-    private sealed class TestEntity
-    {
-        public int Id { get; set; }
-        public string Name { get; set; } = string.Empty;
-    }
-
-    private sealed class TestRawResponse
-    {
-        public int Id { get; set; }
-        public string Name { get; set; } = string.Empty;
-    }
-
-    private sealed class TestPatchEntity
-    {
-        public string Id { get; set; } = string.Empty;
-        public string Name { get; set; } = string.Empty;
-    }
 
     private static readonly string[] IdNameFields = { "id", "name" };
 

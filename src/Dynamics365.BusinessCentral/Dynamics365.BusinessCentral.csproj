@@ -48,9 +48,7 @@
         <None Include="README.md" Pack="true" PackagePath="\" />
     </ItemGroup>
     <ItemGroup>
-        <None Include="bcclient.png"
-              Pack="true"
-              PackagePath="\" />
+        <None Include="bcclient.png" Pack="true" PackagePath="\" />
     </ItemGroup>
 
 </Project>
