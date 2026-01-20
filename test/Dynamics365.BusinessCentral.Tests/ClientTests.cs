@@ -778,6 +778,119 @@ public class ClientTests
 
     #endregion
 
+    #region Token Concurrency & Safety Tests
+
+    [Fact]
+    public async Task Parallel_Requests_Share_Single_Token_Request()
+    {
+        // Arrange
+        var tokenCalls = 0;
+        var dataCalls = 0;
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+            {
+                Interlocked.Increment(ref tokenCalls);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"token\",\"expires_in\":3600}")
+                };
+            }
+
+            Interlocked.Increment(ref dataCalls);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            };
+        });
+
+        // Act
+        var tasks = Enumerable.Range(0, 5)
+            .Select(_ => client.QueryAsync<TestEntity>("orders", "true"));
+
+        await Task.WhenAll(tasks);
+
+        // Assert
+        Assert.Equal(1, tokenCalls);
+        Assert.Equal(5, dataCalls);
+    }
+
+    [Fact]
+    public async Task Parallel_Requests_Refresh_Token_Once_When_Expired()
+    {
+        // Arrange
+        var tokenCalls = 0;
+        var dataCalls = 0;
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+            {
+                var id = Interlocked.Increment(ref tokenCalls);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($"{{\"access_token\":\"token{id}\",\"expires_in\":61}}")
+                };
+            }
+
+            Interlocked.Increment(ref dataCalls);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            };
+        });
+
+        // initial burst uses first token
+        await Task.WhenAll(Enumerable.Range(0, 3)
+            .Select(_ => client.QueryAsync<TestEntity>("orders", "true")));
+
+        // Wait so the safety buffer marks the token as expired (61s - 60s buffer)
+        await Task.Delay(1200);
+
+        // second burst should trigger only one refresh
+        await Task.WhenAll(Enumerable.Range(0, 3)
+            .Select(_ => client.QueryAsync<TestEntity>("orders", "true")));
+
+        // Assert
+        Assert.Equal(2, tokenCalls);
+        Assert.Equal(6, dataCalls);
+    }
+
+    [Fact]
+    public async Task Token_Failure_Is_Propagated_To_Parallel_Requests()
+    {
+        // Arrange
+        var tokenCalls = 0;
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+            {
+                Interlocked.Increment(ref tokenCalls);
+                return new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                {
+                    Content = new StringContent("Invalid credentials")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            };
+        });
+
+        // Act
+        var tasks = Enumerable.Range(0, 3)
+            .Select(_ => Assert.ThrowsAsync<BusinessCentralAuthException>(
+                () => client.QueryAsync<TestEntity>("orders", "true")));
+
+        var exceptions = await Task.WhenAll(tasks);
+
+        // Assert
+        Assert.Equal(3, tokenCalls);
+        Assert.All(exceptions, ex => Assert.Equal(HttpStatusCode.Unauthorized, ex.StatusCode));
+    }
+
+    #endregion
+
     #region OData Filter Tests
 
     [Fact]
@@ -1011,7 +1124,7 @@ public class ClientTests
                     Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
                 };
 
-        
+
             capturedUrl = req.RequestUri!.ToString();
             return new HttpResponseMessage(HttpStatusCode.OK)
             {

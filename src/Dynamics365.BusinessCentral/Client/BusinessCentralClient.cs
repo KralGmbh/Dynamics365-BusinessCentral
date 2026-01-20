@@ -271,20 +271,31 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
     private async Task InvalidateTokenAsync(CancellationToken cancellationToken)
     {
         await _tokenLock.WaitAsync(cancellationToken);
-        try { _token = null; }
-        finally { _tokenLock.Release(); }
+
+        try
+        {
+            _token = null;
+        }
+        finally
+        {
+            _tokenLock.Release();
+        }
     }
 
     private async Task<string> GetTokenAsync(CancellationToken cancellationToken)
     {
-        if (_token != null && !_token.IsExpired)
-            return _token.Token;
+        // Fast path: valid token without locking
+        var current = _token;
+        if (current != null && !current.IsExpired)
+            return current.Token;
 
         await _tokenLock.WaitAsync(cancellationToken);
         try
         {
-            if (_token != null && !_token.IsExpired)
-                return _token.Token;
+            // Double-check after acquiring the lock
+            current = _token;
+            if (current != null && !current.IsExpired)
+                return current.Token;
 
             var endpoint = _options.TokenEndpoint.Replace("{TenantId}", _options.TenantId);
 
@@ -293,7 +304,11 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
                 Encoding.UTF8,
                 "application/x-www-form-urlencoded");
 
-            var req = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = body };
+            var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            {
+                Content = body
+            };
+
             var res = await _http.SendAsync(req, cancellationToken);
             res.RequestMessage ??= req;
 
@@ -301,13 +316,17 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
                 throw await CreateExceptionAsync(res, cancellationToken);
 
             var json = await res.Content.ReadAsStringAsync(cancellationToken);
-            var token = JsonSerializer.Deserialize<TokenResponse>(json, _jsonOptions)
-                        ?? throw new JsonException("Token response was null.");
+
+            var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(json, _jsonOptions)
+                                ?? throw new JsonException("Token response was null.");
+
+            // Apply safety buffer of 60 seconds so we never use a token about to expire
+            var expiresAt = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn - 60);
 
             _token = new CachedAccessToken
             {
-                Token = token.AccessToken,
-                ExpiresAt = DateTime.UtcNow.AddSeconds(token.ExpiresIn)
+                Token = tokenResponse.AccessToken,
+                ExpiresAt = expiresAt
             };
 
             return _token.Token;
@@ -344,7 +363,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         };
     }
 
-    
+
     private sealed class ODataWrapper<T>
     {
         [JsonPropertyName("value")]
@@ -363,7 +382,15 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
     private sealed class CachedAccessToken
     {
         public string Token { get; set; } = string.Empty;
+
         public DateTime ExpiresAt { get; set; }
-        public bool IsExpired => DateTime.UtcNow >= ExpiresAt;
+
+        public bool IsExpired
+        {
+            get
+            {
+                return DateTime.UtcNow >= ExpiresAt;
+            }
+        }
     }
 }
