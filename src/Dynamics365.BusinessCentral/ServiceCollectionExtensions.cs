@@ -13,13 +13,13 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         Action<BusinessCentralOptions> configure)
     {
-        // Register options instance
+        // Configure options instance
         var options = new BusinessCentralOptions();
         configure(options);
         services.AddSingleton(options);
 
-        // Register client with factory so observer can be resolved
-        services.AddHttpClient<IBusinessCentralClient, BusinessCentralClient>()
+        // Register HttpClient + factory-created client
+        services.AddHttpClient<IBusinessCentralClient>()
             .AddTypedClient((http, sp) =>
             {
                 var observer = sp.GetService<IBusinessCentralObserver>();

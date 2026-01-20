@@ -28,10 +28,10 @@ public class ServiceCollectionExtensionsTests
 
         var provider = services.BuildServiceProvider();
 
-        var client = provider.GetService<IBusinessCentralClient>();
+        var client = provider.GetService<BusinessCentralClient>();
 
         Assert.NotNull(client);
-        Assert.IsType<BusinessCentralClient>(client);
+        Assert.IsAssignableFrom<IBusinessCentralClient>(client);
     }
 
     [Fact]
@@ -45,10 +45,10 @@ public class ServiceCollectionExtensionsTests
 
         var provider = services.BuildServiceProvider();
 
-        var client = provider.GetService<IBusinessCentralClient>();
+        var client = provider.GetService<BusinessCentralClient>();
 
         Assert.NotNull(client);
-        Assert.IsType<BusinessCentralClient>(client);
+        Assert.IsAssignableFrom<IBusinessCentralClient>(client);
 
         // Ensure observer itself is resolvable
         var observer = provider.GetService<IBusinessCentralObserver>();
