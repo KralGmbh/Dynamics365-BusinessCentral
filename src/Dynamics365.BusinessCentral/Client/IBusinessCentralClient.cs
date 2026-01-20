@@ -56,7 +56,8 @@ public interface IBusinessCentralClient
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Executes a raw GET request against the given relative OData URL and deserializes the full response.
+    /// Executes a raw GET request against the given relative OData URL and deserializes the full response body.
+    /// This method bypasses the standard query helpers and can be used for custom endpoints or complex responses.
     /// </summary>
     /// <typeparam name="TResponse">The type to deserialize the response body into.</typeparam>
     /// <param name="path">Relative OData URL including any query parameters.</param>
@@ -67,14 +68,16 @@ public interface IBusinessCentralClient
         where TResponse : class;
 
     /// <summary>
-    /// Executes a PATCH request against a specific Business Central entity.
+    /// Executes a PATCH request to partially update an existing Business Central entity.
+    /// The request requires an If-Match header for optimistic concurrency control.
     /// </summary>
-    /// <typeparam name="TPayload">The payload type to serialize as the PATCH body.</typeparam>
+    /// <typeparam name="T">The entity type to serialize and deserialize.</typeparam>
     /// <param name="path">Relative OData entity path.</param>
-    /// <param name="systemId">The Business Central systemId property.</param>
+    /// <param name="systemId">The Business Central systemId of the entity to update.</param>
     /// <param name="payload">Object to serialize and send as the PATCH body.</param>
     /// <param name="ifMatch">ETag value for optimistic concurrency control (default "*").</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The updated entity returned by Business Central.</returns>
     Task<T> PatchAsync<T>(
         string path,
         string systemId,
@@ -83,5 +86,50 @@ public interface IBusinessCentralClient
         CancellationToken cancellationToken = default)
         where T : class;
 
+    /// <summary>
+    /// Executes a POST request to create a new entity in Business Central.
+    /// </summary>
+    /// <typeparam name="T">The entity type to serialize and deserialize.</typeparam>
+    /// <param name="path">Relative OData entity path where the entity should be created.</param>
+    /// <param name="payload">Object to serialize and send as the POST body.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The created entity returned by Business Central.</returns>
+    Task<T> PostAsync<T>(
+        string path,
+        T payload,
+        CancellationToken cancellationToken = default)
+        where T : class;
 
+    /// <summary>
+    /// Executes a PUT request to fully replace an existing Business Central entity.
+    /// The request requires an If-Match header for optimistic concurrency control.
+    /// </summary>
+    /// <typeparam name="T">The entity type to serialize and deserialize.</typeparam>
+    /// <param name="path">Relative OData entity path.</param>
+    /// <param name="systemId">The Business Central systemId of the entity to replace.</param>
+    /// <param name="payload">Object to serialize and send as the PUT body.</param>
+    /// <param name="ifMatch">ETag value for optimistic concurrency control (default "*").</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The updated entity returned by Business Central.</returns>
+    Task<T> PutAsync<T>(
+        string path,
+        string systemId,
+        T payload,
+        string ifMatch = "*",
+        CancellationToken cancellationToken = default)
+        where T : class;
+
+    /// <summary>
+    /// Executes a DELETE request to remove an existing Business Central entity.
+    /// The request requires an If-Match header for optimistic concurrency control.
+    /// </summary>
+    /// <param name="path">Relative OData entity path.</param>
+    /// <param name="systemId">The Business Central systemId of the entity to delete.</param>
+    /// <param name="ifMatch">ETag value for optimistic concurrency control (default "*").</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task DeleteAsync(
+        string path,
+        string systemId,
+        string ifMatch = "*",
+        CancellationToken cancellationToken = default);
 }

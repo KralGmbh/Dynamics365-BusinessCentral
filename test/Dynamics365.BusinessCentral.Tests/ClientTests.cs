@@ -1625,6 +1625,131 @@ public partial class ClientTests
 
     #endregion
 
+    [Fact]
+    public async Task PostAsync_Sends_Correct_Request_And_Returns_Entity()
+    {
+        HttpRequestMessage? captured = null;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            captured = req;
+
+            return new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent("{\"id\":\"1\",\"name\":\"Created\"}")
+            };
+        });
+
+        var payload = new TestPatchEntity { Id = "1", Name = "Created" };
+
+        var result = await client.PostAsync("orders", payload);
+
+        Assert.NotNull(captured);
+        Assert.Equal(HttpMethod.Post, captured!.Method);
+        Assert.Equal("Created", result.Name);
+    }
+
+    [Fact]
+    public async Task PutAsync_Uses_IfMatch_Header_And_Returns_Entity()
+    {
+        HttpRequestMessage? captured = null;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            captured = req;
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"1\",\"name\":\"Updated\"}")
+            };
+        });
+
+        var payload = new TestPatchEntity { Id = "1", Name = "Updated" };
+
+        var result = await client.PutAsync("orders", "1", payload, "W/\"123\"");
+
+        Assert.NotNull(captured);
+        Assert.True(captured!.Headers.Contains("If-Match"));
+        Assert.Equal("Updated", result.Name);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_Sends_Correct_Request()
+    {
+        HttpRequestMessage? captured = null;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            captured = req;
+
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
+        });
+
+        await client.DeleteAsync("orders", "1");
+
+        Assert.NotNull(captured);
+        Assert.Equal(HttpMethod.Delete, captured!.Method);
+        Assert.True(captured.Headers.Contains("If-Match"));
+    }
+
+    [Fact]
+    public async Task PostAsync_Throws_On_BadRequest()
+    {
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            return new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("invalid")
+            };
+        });
+
+        await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
+            client.PostAsync("orders", new TestPatchEntity()));
+    }
+
+    [Fact]
+    public async Task DeleteAsync_Throws_On_Unexpected_Status()
+    {
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+        });
+
+        await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.DeleteAsync("orders", "1"));
+    }
+
+
     #region Test Helper Classes
 
     private static readonly string[] IdNameFields = { "id", "name" };

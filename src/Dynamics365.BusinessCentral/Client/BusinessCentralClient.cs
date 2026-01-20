@@ -81,8 +81,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
     {
         var url = _urlBuilder.BuildEntityUrl(path);
 
-        var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.AddJsonHeaders();
+        var req = CreateJsonRequest(HttpMethod.Get, url);
 
         return await SendWithRetryAndDeserializeAsync<TResponse>(req, cancellationToken);
     }
@@ -127,6 +126,22 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         return all;
     }
 
+    private static HttpRequestMessage CreateJsonRequest(HttpMethod method, string url, object? payload = null)
+    {
+        var req = new HttpRequestMessage(method, url);
+        req.AddJsonHeaders();
+
+        if (payload != null)
+        {
+            req.Content = new StringContent(
+                JsonSerializer.Serialize(payload, _jsonOptions),
+                System.Text.Encoding.UTF8,
+                "application/json");
+        }
+
+        return req;
+    }
+
     public async Task<T> PatchAsync<T>(
         string path,
         string systemId,
@@ -137,15 +152,9 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
     {
         var url = _urlBuilder.BuildEntityUrl(path, systemId);
 
-        var req = new HttpRequestMessage(HttpMethod.Patch, url);
-        req.AddJsonHeaders();
+        var req = CreateJsonRequest(HttpMethod.Patch, url, payload);
 
         req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
-
-        req.Content = new StringContent(
-            JsonSerializer.Serialize(payload, _jsonOptions),
-            System.Text.Encoding.UTF8,
-            "application/json");
 
         var res = await SendWithAuthRetryAsync(req, cancellationToken);
 
@@ -165,6 +174,98 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
             res,
             "Failed to deserialize PATCH response.",
             cancellationToken);
+    }
+
+    public async Task<T> PostAsync<T>(
+        string path,
+        T payload,
+        CancellationToken cancellationToken = default)
+        where T : class
+    {
+        var url = _urlBuilder.BuildEntityUrl(path);
+
+        var req = CreateJsonRequest(HttpMethod.Post, url, payload);
+
+        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+
+        if (res.StatusCode == HttpStatusCode.NoContent)
+        {
+            throw new BusinessCentralServerException(
+                "POST returned 204 NoContent – expected created entity.",
+                res.StatusCode,
+                req.Method.Method,
+                req.RequestUri!.ToString(),
+                null,
+                null,
+                null);
+        }
+
+        return await DeserializeAsync<T>(
+            res,
+            "Failed to deserialize POST response.",
+            cancellationToken);
+    }
+
+    public async Task<T> PutAsync<T>(
+        string path,
+        string systemId,
+        T payload,
+        string ifMatch = "*",
+        CancellationToken cancellationToken = default)
+        where T : class
+    {
+        var url = _urlBuilder.BuildEntityUrl(path, systemId);
+
+        var req = CreateJsonRequest(HttpMethod.Put, url, payload);
+
+        req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+
+        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+
+        if (res.StatusCode == HttpStatusCode.NoContent)
+        {
+            throw new BusinessCentralServerException(
+                "PUT returned 204 NoContent – expected updated entity.",
+                res.StatusCode,
+                req.Method.Method,
+                req.RequestUri!.ToString(),
+                null,
+                null,
+                null);
+        }
+
+        return await DeserializeAsync<T>(
+            res,
+            "Failed to deserialize PUT response.",
+            cancellationToken);
+    }
+
+    public async Task DeleteAsync(
+        string path,
+        string systemId,
+        string ifMatch = "*",
+        CancellationToken cancellationToken = default)
+    {
+        var url = _urlBuilder.BuildEntityUrl(path, systemId);
+
+        var req = CreateJsonRequest(HttpMethod.Delete, url);
+
+        req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+
+        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+
+        if (res.StatusCode != HttpStatusCode.NoContent &&
+            res.StatusCode != HttpStatusCode.OK)
+        {
+            throw new BusinessCentralServerException(
+                $"DELETE expected 204 NoContent but got {(int)res.StatusCode}.",
+                res.StatusCode,
+                req.Method.Method,
+                req.RequestUri!.ToString(),
+                null,
+                null,
+                null);
+        }
     }
 
     private async Task<T> SendWithRetryAndDeserializeAsync<T>(
@@ -273,8 +374,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
     {
         var url = _urlBuilder.BuildQueryUrl(path, filter, options, select);
 
-        var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.AddJsonHeaders();
+        var req = CreateJsonRequest(HttpMethod.Get, url);
 
         return await SendWithAuthRetryAsync(req, cancellationToken);
     }
