@@ -1,4 +1,5 @@
 ﻿using Dynamics365.BusinessCentral.Errors;
+using Dynamics365.BusinessCentral.Tests.Utils;
 using System.Net;
 
 namespace Dynamics365.BusinessCentral.Tests;

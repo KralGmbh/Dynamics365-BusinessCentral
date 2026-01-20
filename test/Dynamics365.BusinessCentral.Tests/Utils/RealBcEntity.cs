@@ -1,4 +1,5 @@
-namespace Dynamics365.BusinessCentral.Tests;
+namespace Dynamics365.BusinessCentral.Tests.Utils;
+
 public sealed class RealBcEntity
 {
     public int EntryNo { get; set; }

@@ -1,6 +1,7 @@
 ﻿using Dynamics365.BusinessCentral.Client;
 using Dynamics365.BusinessCentral.Diagnostics;
 using Dynamics365.BusinessCentral.Options;
+using Dynamics365.BusinessCentral.Tests.Utils;
 
 namespace Dynamics365.BusinessCentral.Tests;
 

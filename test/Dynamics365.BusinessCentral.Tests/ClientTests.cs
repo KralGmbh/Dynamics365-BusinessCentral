@@ -2,6 +2,7 @@ using Dynamics365.BusinessCentral.Client;
 using Dynamics365.BusinessCentral.Errors;
 using Dynamics365.BusinessCentral.OData;
 using Dynamics365.BusinessCentral.Options;
+using Dynamics365.BusinessCentral.Tests.Utils;
 using System.Net;
 using System.Text.Json;
 

@@ -1,6 +1,6 @@
 ﻿using Dynamics365.BusinessCentral.Diagnostics;
 
-namespace Dynamics365.BusinessCentral.Tests;
+namespace Dynamics365.BusinessCentral.Tests.Utils;
 
 public sealed class TestObserver : IBusinessCentralObserver
 {
