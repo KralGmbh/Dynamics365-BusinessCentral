@@ -1,14 +1,12 @@
-﻿using System.Net;
+﻿using Dynamics365.BusinessCentral.Options;
+using System.Net;
 using System.Text.Json;
 
 namespace Dynamics365.BusinessCentral.Errors;
 
 public static class BusinessCentralExceptionFactory
 {
-    private static readonly JsonSerializerOptions _jsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions _jsonOptions = BusinessCentralJson.Options;
 
     public static async Task<BusinessCentralException> CreateAsync(
         HttpResponseMessage res,

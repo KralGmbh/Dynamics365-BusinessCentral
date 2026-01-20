@@ -1,5 +1,7 @@
-﻿using Dynamics365.BusinessCentral.Errors;
+using Dynamics365.BusinessCentral.Client;
+using Dynamics365.BusinessCentral.Errors;
 using Dynamics365.BusinessCentral.OData;
+using Dynamics365.BusinessCentral.Options;
 using System.Net;
 using System.Text.Json;
 
@@ -12,7 +14,6 @@ public class ClientTests
     [Fact]
     public async Task QueryRawAsync_Returns_Deserialized_Response()
     {
-        // Arrange
         var client = TestBase.CreateClient(req =>
         {
             if (req.RequestUri!.AbsoluteUri.Contains("auth"))
@@ -27,10 +28,8 @@ public class ClientTests
             };
         });
 
-        // Act
         var result = await client.QueryRawAsync<TestRawResponse>("orders/raw");
 
-        // Assert
         Assert.NotNull(result);
         Assert.Equal(123, result.Id);
         Assert.Equal("Test", result.Name);
@@ -39,7 +38,6 @@ public class ClientTests
     [Fact]
     public async Task QueryRawAsync_Throws_On_Invalid_Json()
     {
-        // Arrange
         var client = TestBase.CreateClient(req =>
         {
             if (req.RequestUri!.AbsoluteUri.Contains("auth"))
@@ -54,19 +52,13 @@ public class ClientTests
             };
         });
 
-        // Act
-        var ex = await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+        await Assert.ThrowsAsync<JsonException>(() =>
             client.QueryRawAsync<TestRawResponse>("orders/raw"));
-
-        // Assert
-        Assert.Contains("Failed to deserialize", ex.Message);
-        Assert.NotNull(ex.InnerException);
     }
 
     [Fact]
     public async Task QueryRawAsync_Throws_On_Null_Response()
     {
-        // Arrange
         var client = TestBase.CreateClient(req =>
         {
             if (req.RequestUri!.AbsoluteUri.Contains("auth"))
@@ -81,12 +73,8 @@ public class ClientTests
             };
         });
 
-        // Act
-        var ex = await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+        await Assert.ThrowsAsync<JsonException>(() =>
             client.QueryRawAsync<TestRawResponse>("orders/raw"));
-
-        // Assert
-        Assert.Contains("Failed to deserialize", ex.Message);
     }
 
     [Fact]
@@ -240,6 +228,33 @@ public class ClientTests
     }
 
     [Fact]
+    public async Task PatchAsync_Encodes_SystemId_In_Url()
+    {
+        string? capturedUrl = null;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            capturedUrl = req.RequestUri!.AbsoluteUri;
+
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
+        });
+
+        var payload = new TestPatchEntity { Id = "abc 123", Name = "Test" };
+
+        await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.PatchAsync("orders", "abc 123", payload));
+
+        Assert.NotNull(capturedUrl);
+        Assert.Contains("abc%20123", capturedUrl);
+    }
+
+    [Fact]
     public async Task PatchAsync_Throws_On_Error()
     {
         // Arrange
@@ -268,8 +283,8 @@ public class ClientTests
     [Fact]
     public async Task PatchAsync_Serializes_Payload()
     {
-        // Arrange
         string? capturedBody = null;
+
         var client = TestBase.CreateClient(req =>
         {
             if (req.RequestUri!.AbsoluteUri.Contains("auth"))
@@ -278,22 +293,202 @@ public class ClientTests
                     Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
                 };
 
-            capturedBody = req.Content == null ? null : req.Content.ReadAsStringAsync().Result;
+            capturedBody = req.Content?.ReadAsStringAsync().Result;
+
             return new HttpResponseMessage(HttpStatusCode.NoContent);
         });
 
         var payload = new TestPatchEntity { Id = "test-id", Name = "Updated" };
 
-        // Act
-        var result = await client.PatchAsync<TestPatchEntity>("orders", "test-id", payload);
+        await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.PatchAsync("orders", "test-id", payload));
 
-        // Assert
         Assert.NotNull(capturedBody);
+
         using var doc = JsonDocument.Parse(capturedBody!);
         var root = doc.RootElement;
-        Assert.Equal("test-id", root.GetProperty("Id").GetString());
-        Assert.Equal("Updated", root.GetProperty("Name").GetString());
-        Assert.Null(result);
+
+        Assert.Equal("test-id", root.GetProperty("id").GetString());
+        Assert.Equal("Updated", root.GetProperty("name").GetString());
+    }
+
+    #endregion
+
+    #region URL Builder & Serialization Tests
+
+    [Fact]
+    public async Task Query_Encodes_Company_Name_And_Path()
+    {
+        // Arrange
+        string? capturedUrl = null;
+        var http = new HttpClient(new FakeHttpHandler(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            capturedUrl = req.RequestUri!.AbsoluteUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            };
+        }));
+
+        var options = new BusinessCentralOptions
+        {
+            BaseUrl = "https://api.businesscentral.dynamics.com/v2.0/11111111-2222-3333-4444-555555555555/UAT3/ODataV4",
+            Company = "KRAL AG",
+            TenantId = "tenant",
+            ClientId = "client",
+            ClientSecret = "secret",
+            Scope = "scope",
+            TokenEndpoint = "https://auth/{TenantId}"
+        };
+
+        var client = new BusinessCentralClient(http, options);
+
+        // Act
+        await client.QueryAsync<TestEntity>("LDATReservationEntries", "true", select: IdNameFields);
+
+        // Assert
+        Assert.NotNull(capturedUrl);
+        var url = capturedUrl!;
+        Assert.True(url.Contains("Company('KRAL%20AG')/LDATReservationEntries"), url);
+        Assert.True(url.Contains("$select=id,name"), url);
+    }
+
+    [Fact]
+    public async Task Query_Encodes_Path_Segments_With_Spaces()
+    {
+        // Arrange
+        string? capturedUrl = null;
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            capturedUrl = req.RequestUri!.AbsoluteUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            };
+        });
+
+        // Act
+        await client.QueryAsync<TestEntity>("My Custom Table", "true");
+
+        // Assert
+        Assert.NotNull(capturedUrl);
+        Assert.Contains("My%20Custom%20Table", capturedUrl);
+    }
+
+    [Fact]
+    public async Task Query_Encodes_Raw_Filter_String()
+    {
+        // Arrange
+        string? capturedUrl = null;
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            capturedUrl = req.RequestUri!.AbsoluteUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            };
+        });
+
+        var filter = "positive eq true and sourceId eq 'BIF4079921'";
+
+        // Act
+        await client.QueryAsync<TestEntity>("LDATReservationEntries", filter, select: IdNameFields);
+
+        // Assert
+        var filterValue = ExtractFilter(capturedUrl);
+        Assert.Equal(filter, filterValue);
+    }
+
+    [Fact]
+    public async Task Query_Encodes_Select_Fields_With_Special_Characters()
+    {
+        // Arrange
+        string? capturedUrl = null;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            capturedUrl = req.RequestUri!.AbsoluteUri;
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            };
+        });
+
+        var fields = new[] { "Unit Price", "Item No." };
+
+        // Act
+        await client.QueryAsync<TestEntity>("orders", "true", select: fields);
+
+        // Assert
+        Assert.NotNull(capturedUrl);
+        Assert.Contains("$select=", capturedUrl);
+        Assert.Contains("Unit%20Price", capturedUrl);
+        Assert.Contains("Item%20No.", capturedUrl);
+    }
+
+    [Fact]
+    public async Task Query_Deserializes_Real_BusinessCentral_Casing()
+    {
+        // Arrange
+        var response = """
+    {
+        "value": [
+            {
+                "entryNo": 10,
+                "itemNo": "ABC",
+                "serialNo": "XYZ"
+            }
+        ]
+    }
+    """;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(response)
+            };
+        });
+
+        // Act
+        var result = await client.QueryAsync<RealBcEntity>("items", "true");
+
+        // Assert
+        Assert.Single(result);
+        Assert.Equal(10, result[0].EntryNo);
+        Assert.Equal("ABC", result[0].ItemNo);
+        Assert.Equal("XYZ", result[0].SerialNo);
     }
 
     #endregion
@@ -358,6 +553,36 @@ public class ClientTests
         Assert.Contains("$select=", capturedUrl);
         Assert.Contains("id", capturedUrl);
         Assert.Contains("name", capturedUrl);
+    }
+
+    [Fact]
+    public async Task Query_Ignores_Empty_Select_List()
+    {
+        // Arrange
+        string? capturedUrl = null;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            capturedUrl = req.RequestUri!.AbsoluteUri;
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            };
+        });
+
+        // Act
+        await client.QueryAsync<TestEntity>("orders", "true", select: Array.Empty<string>());
+
+        // Assert
+        Assert.NotNull(capturedUrl);
+        Assert.DoesNotContain("$select=", capturedUrl);
     }
 
     [Fact]
@@ -1206,6 +1431,38 @@ public class ClientTests
     }
 
     [Fact]
+    public async Task Query_Filter_Encodes_Special_Characters()
+    {
+        // Arrange
+        string? capturedUrl = null;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            capturedUrl = req.RequestUri!.AbsoluteUri;
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            };
+        });
+
+        var filter = Filter.Equals("name", "A&B/C");
+
+        // Act
+        await client.QueryAsync<TestEntity>("orders", filter);
+
+        // Assert
+        var filterValue = ExtractFilter(capturedUrl);
+        Assert.Equal("name eq 'A&B/C'", filterValue);
+    }
+
+    [Fact]
     public async Task Query_Throws_On_Invalid_Json_Response()
     {
         // Arrange
@@ -1286,9 +1543,88 @@ public class ClientTests
         Assert.Equal(expectedBody, ex.ResponseBody);
     }
 
+    [Fact]
+    public async Task ExceptionFactory_Parses_BusinessCentral_Error_Format()
+    {
+        // Arrange
+        var bcError = @"
+    {
+        ""error"": {
+            ""code"": ""BadRequest_ResourceNotFound"",
+            ""message"": ""Resource not found for the segment 'LDATSalesLine'.  CorrelationId:  aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.""
+        }
+    }";
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            return new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent(bcError)
+            };
+        });
+
+        // Act
+        var ex = await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
+            client.QueryAsync<TestEntity>("orders", "true"));
+
+        // Assert
+        Assert.Contains("Resource not found", ex.Message);
+        Assert.Contains("BadRequest_ResourceNotFound", ex.Message);
+        Assert.Contains("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", ex.Message);
+    }
+
+    [Fact]
+    public async Task ExceptionFactory_Extracts_CorrelationId_From_Message()
+    {
+        // Arrange
+        var error = @"
+    {
+        ""error"": {
+            ""code"": ""SomeError"",
+            ""message"": ""Something failed. CorrelationId: abc-123-def""
+        }
+    }";
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            return new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent(error)
+            };
+        });
+
+        // Act
+        var ex = await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
+            client.QueryAsync<TestEntity>("orders", "true"));
+
+        // Assert
+        Assert.Contains("abc-123-def", ex.Message);
+    }
+
     #endregion
 
+
+
     #region Test Helper Classes
+
+    private sealed class RealBcEntity
+    {
+        public int EntryNo { get; set; }
+        public string ItemNo { get; set; } = string.Empty;
+        public string SerialNo { get; set; } = string.Empty;
+    }
 
     private sealed class TestEntity
     {

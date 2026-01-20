@@ -3,7 +3,6 @@ using Dynamics365.BusinessCentral.OData;
 using Dynamics365.BusinessCentral.Options;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -13,20 +12,32 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
 {
     private readonly HttpClient _http;
     private readonly BusinessCentralOptions _options;
+    private readonly BusinessCentralUrlBuilder _urlBuilder;
+
     private readonly SemaphoreSlim _tokenLock = new(1, 1);
     private CachedAccessToken? _token;
 
     private const string BearerScheme = "Bearer";
 
-    private static readonly JsonSerializerOptions _jsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions _jsonOptions = BusinessCentralJson.Options;
 
     public BusinessCentralClient(HttpClient http, BusinessCentralOptions options)
     {
         _http = http;
         _options = options;
+
+        _http.Timeout = TimeSpan.FromSeconds(100);
+
+        _http.DefaultRequestHeaders.Accept.Clear();
+        _http.DefaultRequestHeaders.Accept.Add(
+            new MediaTypeWithQualityHeaderValue("application/json"));
+
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Dynamics365.BusinessCentral.Client/1.0");
+
+        _urlBuilder = new BusinessCentralUrlBuilder(
+            options.BaseUrl,
+            options.Company);
     }
 
     public Task<List<TEntity>> QueryAsync<TEntity>(
@@ -76,39 +87,12 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         CancellationToken cancellationToken = default)
         where TResponse : class
     {
-        var token = await GetTokenAsync(cancellationToken);
+        var url = _urlBuilder.BuildEntityUrl(path);
 
-        var req = new HttpRequestMessage(
-            HttpMethod.Get,
-            $"{_options.BaseUrl}/Company('{_options.Company}')/{path}");
+        var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.AddJsonHeaders();
 
-        req.Headers.Authorization = new AuthenticationHeaderValue(BearerScheme, token);
-
-        var res = await _http.SendAsync(req, cancellationToken);
-        res.RequestMessage ??= req;
-
-        if (!res.IsSuccessStatusCode)
-            throw await BusinessCentralExceptionFactory.CreateAsync(res, cancellationToken);
-
-        var json = await res.Content.ReadAsStringAsync(cancellationToken);
-
-        try
-        {
-            return JsonSerializer.Deserialize<TResponse>(json, _jsonOptions)
-                   ?? throw new JsonException("Response was null.");
-        }
-        catch (JsonException ex)
-        {
-            throw new BusinessCentralServerException(
-                "Failed to deserialize Business Central response.",
-                res.StatusCode,
-                req.Method.Method,
-                req.RequestUri!.ToString(),
-                json,
-                null,
-                null,
-                ex);
-        }
+        return await SendWithRetryAndDeserializeAsync<TResponse>(req, cancellationToken);
     }
 
     public async Task<List<TEntity>> QueryAllAsync<TEntity>(
@@ -140,10 +124,11 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
                 select,
                 cancellationToken);
 
-            if (page.Count == 0)
+            all.AddRange(page);
+
+            if (page.Count < pageSize)
                 break;
 
-            all.AddRange(page);
             skip += page.Count;
         }
 
@@ -158,27 +143,31 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         CancellationToken cancellationToken = default)
         where T : class
     {
-        var token = await GetTokenAsync(cancellationToken);
+        var url = _urlBuilder.BuildEntityUrl(path, systemId);
 
-        var url = $"{_options.BaseUrl}/Company('{_options.Company}')/{path}({systemId})";
         var req = new HttpRequestMessage(HttpMethod.Patch, url);
+        req.AddJsonHeaders();
 
-        req.Headers.Authorization = new AuthenticationHeaderValue(BearerScheme, token);
         req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
 
         req.Content = new StringContent(
             JsonSerializer.Serialize(payload, _jsonOptions),
-            Encoding.UTF8,
+            System.Text.Encoding.UTF8,
             "application/json");
 
-        var res = await _http.SendAsync(req, cancellationToken);
-        res.RequestMessage ??= req;
-
-        if (!res.IsSuccessStatusCode)
-            throw await BusinessCentralExceptionFactory.CreateAsync(res, cancellationToken);
+        var res = await SendWithAuthRetryAsync(req, cancellationToken);
 
         if (res.StatusCode == HttpStatusCode.NoContent)
-            return default!;
+        {
+            throw new BusinessCentralServerException(
+                "PATCH returned 204 NoContent – no entity was returned.",
+                res.StatusCode,
+                req.Method.Method,
+                req.RequestUri!.ToString(),
+                null,
+                null,
+                null);
+        }
 
         var json = await res.Content.ReadAsStringAsync(cancellationToken);
 
@@ -201,29 +190,39 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         }
     }
 
-    private async Task<HttpResponseMessage> SendAsync(
-        string path,
-        string filter,
-        QueryOptions options,
-        IEnumerable<string>? select,
+    private async Task<T> SendWithRetryAndDeserializeAsync<T>(
+        HttpRequestMessage req,
+        CancellationToken cancellationToken)
+        where T : class
+    {
+        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+
+        var json = await res.Content.ReadAsStringAsync(cancellationToken);
+
+        return JsonSerializer.Deserialize<T>(json, _jsonOptions)
+               ?? throw new JsonException("Response was null.");
+    }
+
+    private async Task<HttpResponseMessage> SendWithAuthRetryAsync(
+        HttpRequestMessage originalRequest,
         CancellationToken cancellationToken)
     {
-        const int maxRetries = 1;
-
-        for (var attempt = 0; attempt <= maxRetries; attempt++)
+        for (var attempt = 0; attempt < 2; attempt++)
         {
-            var isRetry = attempt > 0;
+            var token = await GetTokenAsync(cancellationToken);
 
-            if (isRetry)
-                await InvalidateTokenAsync(cancellationToken);
+            var req = originalRequest.Clone();
+            req.Headers.Authorization =
+                new AuthenticationHeaderValue(BearerScheme, token);
 
-            var req = await CreateRequestAsync(path, filter, options, select, cancellationToken);
             var res = await _http.SendAsync(req, cancellationToken);
-
             res.RequestMessage ??= req;
 
-            if (res.StatusCode == HttpStatusCode.Unauthorized && !isRetry)
+            if (res.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
+            {
+                await InvalidateTokenAsync(cancellationToken);
                 continue;
+            }
 
             if (!res.IsSuccessStatusCode)
                 throw await BusinessCentralExceptionFactory.CreateAsync(res, cancellationToken);
@@ -231,54 +230,22 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
             return res;
         }
 
-        throw new InvalidOperationException("Unexpected state in SendAsync");
+        throw new InvalidOperationException("Unexpected state in SendWithAuthRetryAsync");
     }
 
-    private async Task<HttpRequestMessage> CreateRequestAsync(
+    private async Task<HttpResponseMessage> SendAsync(
         string path,
         string filter,
         QueryOptions options,
         IEnumerable<string>? select,
         CancellationToken cancellationToken)
     {
-        var token = await GetTokenAsync(cancellationToken);
-        var url = BuildUrl(path, filter, options, select);
+        var url = _urlBuilder.BuildQueryUrl(path, filter, options, select);
 
         var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.Authorization = new AuthenticationHeaderValue(BearerScheme, token);
+        req.AddJsonHeaders();
 
-        return req;
-    }
-
-    private string BuildUrl(
-        string path,
-        string filter,
-        QueryOptions options,
-        IEnumerable<string>? select)
-    {
-        var url = $"{_options.BaseUrl}/Company('{_options.Company}')/{path}";
-
-        var query = new List<string>();
-
-        if (!string.IsNullOrWhiteSpace(filter) && filter != "true")
-            query.Add("$filter=" + Uri.EscapeDataString(filter));
-
-        if (select != null)
-            query.Add("$select=" + string.Join(",", select.Select(Uri.EscapeDataString)));
-
-        if (options.Top != null)
-            query.Add("$top=" + options.Top);
-
-        if (options.Skip != null)
-            query.Add("$skip=" + options.Skip);
-
-        if (options.OrderBy != null)
-            query.Add("$orderby=" + Uri.EscapeDataString(options.OrderBy));
-
-        if (query.Count > 0)
-            url += "?" + string.Join("&", query);
-
-        return url;
+        return await SendWithAuthRetryAsync(req, cancellationToken);
     }
 
     private async Task InvalidateTokenAsync(CancellationToken cancellationToken)
@@ -303,12 +270,18 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
 
             var endpoint = _options.TokenEndpoint.Replace("{TenantId}", _options.TenantId);
 
-            var body = new StringContent(
-                $"client_id={_options.ClientId}&client_secret={_options.ClientSecret}&scope={_options.Scope}&grant_type=client_credentials",
-                Encoding.UTF8,
-                "application/x-www-form-urlencoded");
+            var form = new Dictionary<string, string>
+            {
+                ["client_id"] = _options.ClientId,
+                ["client_secret"] = _options.ClientSecret,
+                ["scope"] = _options.Scope,
+                ["grant_type"] = "client_credentials"
+            };
+
+            var body = new FormUrlEncodedContent(form);
 
             var req = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = body };
+            req.AddJsonHeaders();
 
             var res = await _http.SendAsync(req, cancellationToken);
             res.RequestMessage ??= req;
@@ -355,9 +328,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
     private sealed class CachedAccessToken
     {
         public string Token { get; set; } = string.Empty;
-
         public DateTime ExpiresAt { get; set; }
-
         public bool IsExpired => DateTime.UtcNow >= ExpiresAt;
     }
 }
