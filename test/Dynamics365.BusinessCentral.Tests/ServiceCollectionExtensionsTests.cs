@@ -1,5 +1,4 @@
-﻿using Dynamics365.BusinessCentral;
-using Dynamics365.BusinessCentral.Client;
+﻿using Dynamics365.BusinessCentral.Client;
 using Dynamics365.BusinessCentral.Diagnostics;
 using Dynamics365.BusinessCentral.Options;
 using Microsoft.Extensions.DependencyInjection;
@@ -28,13 +27,10 @@ public class ServiceCollectionExtensionsTests
 
         var provider = services.BuildServiceProvider();
 
-        var client = provider.GetService<BusinessCentralClient>();
-        var clientInterface = provider.GetService<IBusinessCentralClient>();
+        var client = provider.GetService<IBusinessCentralClient>();
 
         Assert.NotNull(client);
-        Assert.IsAssignableFrom<IBusinessCentralClient>(client);
-        Assert.NotNull(clientInterface);
-        Assert.IsType<BusinessCentralClient>(clientInterface);
+        Assert.IsType<BusinessCentralClient>(client);
     }
 
     [Fact]
@@ -48,10 +44,10 @@ public class ServiceCollectionExtensionsTests
 
         var provider = services.BuildServiceProvider();
 
-        var client = provider.GetService<BusinessCentralClient>();
+        var client = provider.GetService<IBusinessCentralClient>();
 
         Assert.NotNull(client);
-        Assert.IsAssignableFrom<IBusinessCentralClient>(client);
+        Assert.IsType<BusinessCentralClient>(client);
 
         // Ensure observer itself is resolvable
         var observer = provider.GetService<IBusinessCentralObserver>();

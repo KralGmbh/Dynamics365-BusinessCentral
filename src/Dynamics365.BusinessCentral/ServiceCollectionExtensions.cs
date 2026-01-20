@@ -3,7 +3,6 @@ using Dynamics365.BusinessCentral.Diagnostics;
 using Dynamics365.BusinessCentral.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Options;
 using System.Diagnostics.CodeAnalysis;
 
 namespace Dynamics365.BusinessCentral;
@@ -21,19 +20,7 @@ public static class ServiceCollectionExtensions
             .Validate(ValidateOption, "BusinessCentralOptions contain invalid configuration.")
             .ValidateOnStart();
 
-        services.AddHttpClient<BusinessCentralClient>()
-            .AddTypedClient((http, sp) =>
-            {
-                var observer = sp.GetService<IBusinessCentralObserver>();
-
-                return new BusinessCentralClient(
-                    http,
-                    sp.GetRequiredService<IOptions<BusinessCentralOptions>>(),
-                    observer);
-            });
-
-        services.TryAddTransient<IBusinessCentralClient>(sp =>
-            sp.GetRequiredService<BusinessCentralClient>());
+        services.AddHttpClient<IBusinessCentralClient, BusinessCentralClient>();
 
         return services;
     }
