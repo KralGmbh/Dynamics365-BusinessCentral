@@ -29,9 +29,12 @@ public class ServiceCollectionExtensionsTests
         var provider = services.BuildServiceProvider();
 
         var client = provider.GetService<BusinessCentralClient>();
+        var clientInterface = provider.GetService<IBusinessCentralClient>();
 
         Assert.NotNull(client);
         Assert.IsAssignableFrom<IBusinessCentralClient>(client);
+        Assert.NotNull(clientInterface);
+        Assert.IsType<BusinessCentralClient>(clientInterface);
     }
 
     [Fact]
@@ -80,10 +83,10 @@ public class ServiceCollectionExtensionsTests
 
         var provider = services.BuildServiceProvider();
 
-        var options = provider.GetService<BusinessCentralOptions>();
+        var options = provider.GetService<Microsoft.Extensions.Options.IOptions<BusinessCentralOptions>>();
 
         Assert.NotNull(options);
-        Assert.Equal("tenant", options.TenantId);
+        Assert.Equal("tenant", options!.Value.TenantId);
     }
 
 

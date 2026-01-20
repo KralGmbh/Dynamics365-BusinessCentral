@@ -358,7 +358,9 @@ public partial class ClientTests
             TokenEndpoint = "https://auth/{TenantId}"
         };
 
-        var client = new BusinessCentralClient(http, options);
+        var client = new BusinessCentralClient(
+            http,
+            Microsoft.Extensions.Options.Options.Create(options));
 
         // Act
         await client.QueryAsync<TestEntity>("LDATReservationEntries", "true", select: IdNameFields);

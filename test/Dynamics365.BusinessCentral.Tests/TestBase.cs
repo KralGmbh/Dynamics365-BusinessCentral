@@ -2,6 +2,7 @@
 using Dynamics365.BusinessCentral.Diagnostics;
 using Dynamics365.BusinessCentral.Options;
 using Dynamics365.BusinessCentral.Tests.Utils;
+using Microsoft.Extensions.Options;
 
 namespace Dynamics365.BusinessCentral.Tests;
 
@@ -24,6 +25,6 @@ public abstract class TestBase
             TokenEndpoint = "https://auth/{TenantId}"
         };
 
-        return new BusinessCentralClient(http, options, observer);
+        return new BusinessCentralClient(http, Microsoft.Extensions.Options.Options.Create(options), observer);
     }
 }

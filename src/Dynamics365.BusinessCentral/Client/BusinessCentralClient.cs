@@ -2,6 +2,7 @@
 using Dynamics365.BusinessCentral.Errors;
 using Dynamics365.BusinessCentral.OData;
 using Dynamics365.BusinessCentral.Options;
+using Microsoft.Extensions.Options;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -25,11 +26,11 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
 
     public BusinessCentralClient(
         HttpClient http,
-        BusinessCentralOptions options,
+        IOptions<BusinessCentralOptions> options,
         IBusinessCentralObserver? observer = null)
     {
         _http = http;
-        _options = options;
+        _options = options.Value;
 
         _observer = observer ?? new NullBusinessCentralObserver();
 
@@ -43,9 +44,10 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
             "Dynamics365.BusinessCentral.Client/1.0");
 
         _urlBuilder = new BusinessCentralUrlBuilder(
-            options.BaseUrl,
-            options.Company);
+            _options.BaseUrl,
+            _options.Company);
     }
+
 
     public Task<List<TEntity>> QueryAsync<TEntity>(
         string path,
