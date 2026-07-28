@@ -24,6 +24,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     private readonly string _company;
 
     private const string BearerScheme = "Bearer";
+    private const string IfMatchHeader = "If-Match";
 
     /// <summary>Default page size used when auto-paging.</summary>
     private const int DefaultPageSize = 1000;
@@ -234,7 +235,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             {
                 serverDriven = true;
 
-                page = await FetchNextPageAsync<TEntity>(page.NextLink!, cancellationToken)
+                page = await FetchNextPageAsync<TEntity>(page.NextLink, cancellationToken)
                     .ConfigureAwait(false);
 
                 continue;
@@ -348,7 +349,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             () =>
             {
                 var req = CreateJsonRequest(HttpMethod.Patch, url, payload);
-                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.Headers.TryAddWithoutValidation(IfMatchHeader, ifMatch);
                 req.AddReturnRepresentationPreference();
                 return req;
             },
@@ -417,7 +418,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             () =>
             {
                 var req = CreateJsonRequest(HttpMethod.Patch, url, payload);
-                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.Headers.TryAddWithoutValidation(IfMatchHeader, ifMatch);
                 req.AddReturnRepresentationPreference();
                 return req;
             },
@@ -442,7 +443,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             () =>
             {
                 var req = CreateJsonRequest(HttpMethod.Put, url, payload);
-                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.Headers.TryAddWithoutValidation(IfMatchHeader, ifMatch);
                 req.AddReturnRepresentationPreference();
                 return req;
             },
@@ -467,7 +468,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             () =>
             {
                 var req = CreateJsonRequest(HttpMethod.Put, url, payload);
-                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.Headers.TryAddWithoutValidation(IfMatchHeader, ifMatch);
                 req.AddReturnRepresentationPreference();
                 return req;
             },
@@ -490,7 +491,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             () =>
             {
                 var req = CreateJsonRequest(HttpMethod.Delete, url);
-                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.Headers.TryAddWithoutValidation(IfMatchHeader, ifMatch);
                 return req;
             },
             cancellationToken).ConfigureAwait(false);
@@ -792,8 +793,13 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     private static TimeSpan Floor(TimeSpan value) =>
         value < TimeSpan.Zero ? TimeSpan.Zero : value;
 
-    private static TimeSpan Clamp(TimeSpan value, TimeSpan max) =>
-        value < TimeSpan.Zero ? TimeSpan.Zero : value > max ? max : value;
+    private static TimeSpan Clamp(TimeSpan value, TimeSpan max)
+    {
+        if (value < TimeSpan.Zero)
+            return TimeSpan.Zero;
+
+        return value > max ? max : value;
+    }
 
     private static async Task<string?> ReadBodySafeAsync(
         HttpResponseMessage res,

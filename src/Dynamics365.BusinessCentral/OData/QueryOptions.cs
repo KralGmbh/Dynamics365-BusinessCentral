@@ -37,7 +37,7 @@ public sealed class QueryOptions
         {
             _orderBy.Clear();
             if (!string.IsNullOrWhiteSpace(value))
-                _orderBy.Add(value!);
+                _orderBy.Add(value);
         }
     }
 
@@ -87,11 +87,8 @@ public sealed class QueryOptions
     /// <summary>Expands the given navigation properties (<c>$expand</c>).</summary>
     public QueryOptions WithExpand(params string[] fields)
     {
-        foreach (var field in fields)
-        {
-            if (!string.IsNullOrWhiteSpace(field) && !_expand.Contains(field))
-                _expand.Add(field);
-        }
+        foreach (var field in fields.Where(f => !string.IsNullOrWhiteSpace(f) && !_expand.Contains(f)))
+            _expand.Add(field);
 
         return this;
     }
