@@ -187,6 +187,131 @@ public class RetryTests
         Assert.All(observer.Retries, r => Assert.False(r.FromRetryAfter));
     }
 
+    #region Replay safety
+
+    // 429 is rejected before processing, so replaying it can never duplicate a write.
+    [Fact]
+    public async Task Post_Is_Retried_On_429()
+    {
+        var posts = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+        {
+            posts++;
+            return posts == 1 ? Throttled() : TestBase.Json("{\"id\":\"1\",\"name\":\"x\"}");
+        }));
+
+        await client.PostAsync("ldatSummary", new TestPatchEntity { Id = "1", Name = "x" });
+
+        Assert.Equal(2, posts);
+    }
+
+    // 408/502/503/504 are ambiguous — the row may already exist. Replaying a POST would
+    // orphan a duplicate, so it must surface instead.
+    [Theory]
+    [InlineData(HttpStatusCode.RequestTimeout)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    public async Task Post_Is_Not_Replayed_On_Ambiguous_Transient_Failures(HttpStatusCode status)
+    {
+        var posts = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+        {
+            posts++;
+            return new HttpResponseMessage(status) { Content = new StringContent("x") };
+        }));
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.PostAsync("ldatSummary", new TestPatchEntity()));
+
+        Assert.Equal(1, posts);
+
+        // Still reported as transient so the caller can decide for itself.
+        Assert.True(ex.IsTransient);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    public async Task Idempotent_Methods_Are_Still_Replayed(HttpStatusCode status)
+    {
+        var gets = 0;
+        var puts = 0;
+        var deletes = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(req =>
+        {
+            if (req.Method == HttpMethod.Get) gets++;
+            if (req.Method == HttpMethod.Put) puts++;
+            if (req.Method == HttpMethod.Delete) deletes++;
+
+            return new HttpResponseMessage(status) { Content = new StringContent("x") };
+        }));
+
+        await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.QueryAsync<TestEntity>("orders", "true"));
+
+        await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.PutAsync("orders", "1", new TestPatchEntity()));
+
+        await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.DeleteAsync("orders", "1"));
+
+        Assert.Equal(3, gets);
+        Assert.Equal(3, puts);
+        Assert.Equal(3, deletes);
+    }
+
+    [Fact]
+    public async Task Post_Replay_Can_Be_Opted_Into()
+    {
+        var posts = 0;
+
+        var client = TestBase.CreateClient(
+            TestBase.WithToken(_ =>
+            {
+                posts++;
+                return new HttpResponseMessage(HttpStatusCode.GatewayTimeout)
+                {
+                    Content = new StringContent("x")
+                };
+            }),
+            configure: o => o.Retry = new BusinessCentralRetryOptions
+            {
+                MaxAttempts = 3,
+                BaseDelay = TimeSpan.Zero,
+                MaxDelay = TimeSpan.Zero,
+                RetryPostOnTransientFailures = true
+            });
+
+        await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.PostAsync("ldatSummary", new TestPatchEntity()));
+
+        Assert.Equal(3, posts);
+    }
+
+    [Fact]
+    public async Task Post_Not_Replayed_Reports_A_Single_Failure_And_No_Retry_Event()
+    {
+        var observer = new RecordingObserver();
+
+        var client = TestBase.CreateClient(
+            TestBase.WithToken(_ => new HttpResponseMessage(HttpStatusCode.GatewayTimeout)
+            {
+                Content = new StringContent("x")
+            }),
+            observer);
+
+        await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.PostAsync("ldatSummary", new TestPatchEntity()));
+
+        Assert.Empty(observer.Retries);
+    }
+
+    #endregion
+
     private sealed class RecordingObserver : IBusinessCentralObserver
     {
         public readonly List<BusinessCentralRetryInfo> Retries = [];

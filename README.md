@@ -226,6 +226,19 @@ services.AddBusinessCentral(options =>
 });
 ```
 
+**Writes are not blindly replayed.** A `429` is rejected before Business Central processes
+it, so replaying is always safe. The other transient statuses are ambiguous — the write may
+already have been applied — so:
+
+| Method | `429` | `408` / `502` / `503` / `504` |
+| ------ | ----- | ----------------------------- |
+| `GET`, `PUT`, `DELETE` | retried | retried (idempotent — replay converges) |
+| `POST` | retried | **not** retried; the exception is raised |
+
+Without this, a `504` on a `POST` could duplicate a record that Business Central had already
+created. If your endpoint deduplicates server-side, or duplicates are acceptable, opt back
+in with `options.Retry.RetryPostOnTransientFailures = true`.
+
 # ⚠️ Errors
 
 All failures derive from `BusinessCentralException`. `Message` is a single line suitable

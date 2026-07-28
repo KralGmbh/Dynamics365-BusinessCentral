@@ -509,7 +509,8 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
                         Exception = failure
                     });
 
-                    if (failure.IsTransient && transientAttempt + 1 < maxAttempts)
+                    if (transientAttempt + 1 < maxAttempts &&
+                        IsSafeToReplay(failure, originalRequest.Method, retry))
                     {
                         transientAttempt++;
 
@@ -561,6 +562,32 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Whether this failure may be retried by replaying the same request.
+    /// </summary>
+    /// <remarks>
+    /// A <c>429</c> was rejected before processing, so replaying is always safe. The other
+    /// transient statuses are ambiguous — the write may already have been applied — so a
+    /// non-idempotent <c>POST</c> is not replayed unless the caller opts in. Idempotent
+    /// methods converge on the same state and are always retried.
+    /// </remarks>
+    private static bool IsSafeToReplay(
+        BusinessCentralException failure,
+        HttpMethod method,
+        BusinessCentralRetryOptions retry)
+    {
+        if (!failure.IsTransient)
+            return false;
+
+        if (failure.StatusCode == HttpStatusCode.TooManyRequests)
+            return true;
+
+        if (method == HttpMethod.Post && !retry.RetryPostOnTransientFailures)
+            return false;
+
+        return true;
     }
 
     /// <summary>

@@ -47,7 +47,9 @@ CI: `.github/workflows/sonar.yml` builds + tests on net8.0 and runs SonarCloud o
 Everything funnels through `BusinessCentralClient.SendWithAuthRetryAsync`, a single loop with **two independent retry budgets**:
 
 - **auth** — one retry, tracked by `authRetried`. A `401` invalidates the token and retries once.
-- **transient** — `BusinessCentralRetryOptions.MaxAttempts`, tracked by `transientAttempt`. Fires when `exception.IsTransient` (429/408/502/503/504). `ComputeDelay` prefers the server's `Retry-After`, else doubles `BaseDelay`; both capped by `MaxDelay`.
+- **transient** — `BusinessCentralRetryOptions.MaxAttempts`, tracked by `transientAttempt`. Gated by `IsSafeToReplay`, not by `IsTransient` alone. `ComputeDelay` prefers the server's `Retry-After`, else doubles `BaseDelay`; both capped by `MaxDelay`.
+
+`IsSafeToReplay` encodes a deliberate asymmetry: a `429` is rejected *before* processing so it is always replayable, but `408/502/503/504` are ambiguous — the write may already have landed. A `POST` is therefore not replayed on those unless `Retry.RetryPostOnTransientFailures` is set, because a duplicate row is worse than a surfaced error. `GET`/`PUT`/`DELETE` are idempotent and always retried. Don't "simplify" this back to a plain `IsTransient` check.
 
 Each attempt clones the request (`HttpRequestExtensions.Clone`, because a sent `HttpRequestMessage` can't be reused). A failure is reported to the observer exactly once — the throw site sets `failureReported` so the catch-all doesn't double-report.
 
