@@ -2,6 +2,8 @@ using Dynamics365.BusinessCentral.Client;
 using Dynamics365.BusinessCentral.OData;
 using Dynamics365.BusinessCentral.Tests.Utils;
 using System.Reflection;
+using System.Net;
+using Dynamics365.BusinessCentral.Errors;
 
 namespace Dynamics365.BusinessCentral.Tests;
 
@@ -221,6 +223,60 @@ public class PagingGuardTests
 
         // Guards against the version drifting out of the string again.
         Assert.StartsWith("2.", expected);
+    }
+
+    [Fact]
+    public async Task Token_Response_Is_Disposed_After_Acquisition()
+    {
+        var disposed = false;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new DisposeTrackingContent(
+                        "{\"access_token\":\"abc\",\"expires_in\":3600}",
+                        () => disposed = true)
+                };
+
+            return TestBase.Json("{\"value\":[]}");
+        });
+
+        await client.QueryAsync<TestEntity>("orders", "true");
+
+        Assert.True(disposed, "the token response should be released once the token is read");
+    }
+
+    [Fact]
+    public async Task Delete_Error_Message_States_The_Real_Contract()
+    {
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+            new HttpResponseMessage(HttpStatusCode.Accepted) { Content = new StringContent("?") }));
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.DeleteAsync("orders", "1"));
+
+        // 200 is accepted too, so the message must not claim 204 is the only success.
+        Assert.Contains("200", ex.Message);
+        Assert.Contains("204", ex.Message);
+        Assert.Contains("202", ex.Message);
+    }
+
+    private sealed class DisposeTrackingContent : StringContent
+    {
+        private readonly Action _onDispose;
+
+        public DisposeTrackingContent(string content, Action onDispose) : base(content)
+            => _onDispose = onDispose;
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+                _onDispose();
+
+            base.Dispose(disposing);
+        }
     }
 
     #endregion

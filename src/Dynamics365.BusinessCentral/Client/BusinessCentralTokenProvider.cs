@@ -74,10 +74,13 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
 
             _observer.OnTokenRequested();
 
-            var req = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = body };
+            // Both are fully consumed here — nothing escapes this method — so they can be
+            // scoped. Disposing the request also releases the FormUrlEncodedContent, which
+            // carries the client secret.
+            using var req = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = body };
             req.AddJsonHeaders();
 
-            var res = await _http.SendAsync(req, cancellationToken).ConfigureAwait(false);
+            using var res = await _http.SendAsync(req, cancellationToken).ConfigureAwait(false);
             res.RequestMessage ??= req;
 
             if (!res.IsSuccessStatusCode)

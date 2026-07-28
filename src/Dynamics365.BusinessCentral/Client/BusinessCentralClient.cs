@@ -499,7 +499,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             res.StatusCode != HttpStatusCode.OK)
         {
             throw new BusinessCentralServerException(
-                $"DELETE expected 204 NoContent but got {(int)res.StatusCode}.",
+                $"DELETE expected 200 OK or 204 NoContent but got {(int)res.StatusCode}.",
                 res.StatusCode,
                 HttpMethod.Delete.Method,
                 url,
