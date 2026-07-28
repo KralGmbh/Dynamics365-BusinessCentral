@@ -108,7 +108,12 @@ public class OptionsTests
         var message = string.Join(" | ", ex.Failures);
 
         Assert.Contains("unsubstituted placeholder", message);
+
+        // The message must list every placeholder ResolvePlaceholders actually handles,
+        // including the historical {TenantId}, or it sends users the wrong way.
         Assert.Contains("{tenant}", message);
+        Assert.Contains("{TenantId}", message);
+        Assert.Contains("{environment}", message);
     }
 
     [Fact]

@@ -17,8 +17,8 @@
 
         <PackageTags>Dynamics365 BusinessCentral OData Client</PackageTags>
 
-        <PackageProjectUrl>https://github.com/kraldev/Dynamics365-BusinessCentral</PackageProjectUrl>
-        <RepositoryUrl>https://github.com/kraldev/Dynamics365-BusinessCentral</RepositoryUrl>
+        <PackageProjectUrl>https://github.com/KralGmbh/Dynamics365-BusinessCentral</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/KralGmbh/Dynamics365-BusinessCentral</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
 
         <PackageLicenseExpression>MIT</PackageLicenseExpression>

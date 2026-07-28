@@ -49,7 +49,7 @@ internal sealed class BusinessCentralOptionsValidator : IValidateOptions<Busines
             failures.Add(
                 $"{nameof(BusinessCentralOptions)}.{propertyName} still contains an unsubstituted " +
                 $"placeholder after resolution ('{resolved}'). Supported placeholders are " +
-                $"{{tenant}} and {{environment}}.");
+                $"{{tenant}} (or the historical {{TenantId}}) and {{environment}}.");
             return;
         }
 

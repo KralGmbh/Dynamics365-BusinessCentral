@@ -1,8 +1,8 @@
 namespace Dynamics365.BusinessCentral.Options;
 
 /// <summary>
-/// Controls how the client retries throttled (<c>429</c>) and transient (<c>503</c>,
-/// <c>504</c>, <c>408</c>) responses.
+/// Controls how the client retries throttled (<c>429</c>) and transient (<c>408</c>,
+/// <c>502</c>, <c>503</c>, <c>504</c>) responses.
 /// </summary>
 /// <remarks>
 /// Business Central throttles aggressively and answers with a <c>Retry-After</c> header;
