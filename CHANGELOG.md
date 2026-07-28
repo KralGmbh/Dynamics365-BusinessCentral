@@ -104,7 +104,7 @@ are silent.
   `BusinessCentralServerException` rather than a subclass. `catch (BusinessCentralServerException)`
   no longer sees it. (The same was already true of `400`/`401`/`403`/`404` — see
   [MIGRATION.md](MIGRATION.md).)
-- Test suite grew from 80 to 141, green on net8.0/net9.0/net10.0 with zero warnings.
+- Test suite grew from 80 to 159, green on net8.0/net9.0/net10.0 with zero warnings.
 - No Native AOT or trimming support yet; `System.Text.Json` reflection and the reflection
   used for typed selectors both block it.
 
