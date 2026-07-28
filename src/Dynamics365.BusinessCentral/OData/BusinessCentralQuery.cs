@@ -105,18 +105,24 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
 
     public IBusinessCentralQuery<TEntity> Top(int count)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+
         _top = count;
         return this;
     }
 
     public IBusinessCentralQuery<TEntity> Skip(int count)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+
         _skip = count;
         return this;
     }
 
     public IBusinessCentralQuery<TEntity> PageSize(int size)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(size, 1);
+
         _pageSize = size;
         return this;
     }
@@ -155,8 +161,18 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
     public async IAsyncEnumerable<TEntity> StreamAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var pageSize = _pageSize ?? DefaultPageSize;
         var limit = _top;
+
+        // Top(0) is a request for no rows. Returning here also keeps the loop below from
+        // requesting $top=0 forever without ever advancing.
+        if (limit == 0)
+            yield break;
+
+        var pageSize = _pageSize ?? DefaultPageSize;
+
+        if (pageSize <= 0)
+            yield break;
+
         var skip = _skip ?? 0;
         var emitted = 0;
 

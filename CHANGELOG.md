@@ -34,6 +34,15 @@ are silent.
   use the new `ThenByAsc`/`ThenByDesc` to append.
 - **`Filter.In` with an empty collection** yields `false` instead of the invalid OData
   expression `field in ()`.
+- **Non-positive paging values no longer hang.** A page size of zero made the "short page"
+  termination check unreachable, so streaming and `QueryAllAsync` requested the same empty
+  page forever. `PageSize` now requires a positive value, `Top`/`Skip` reject negatives, and
+  a zero-row request returns immediately.
+- **Short-lived tokens are cached.** Subtracting the fixed 60-second safety margin from an
+  `expires_in` below 60 put the expiry in the past, so the token counted as expired on
+  arrival and every call re-authenticated.
+- **The `User-Agent` reports the real version**, derived from the assembly rather than a
+  hard-coded `1.0`.
 - `BusinessCentralErrorInfo.ResponseBody` was declared but never populated.
 - The constructor no longer mutates the injected `HttpClient`, which may be pooled.
 

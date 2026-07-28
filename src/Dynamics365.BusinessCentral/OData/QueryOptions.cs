@@ -42,15 +42,21 @@ public sealed class QueryOptions
     }
 
     /// <summary>Limits the result to <paramref name="value"/> entities (<c>$top</c>).</summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="value"/> is negative.</exception>
     public QueryOptions WithTop(int value)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(value);
+
         Top = value;
         return this;
     }
 
     /// <summary>Skips <paramref name="value"/> entities (<c>$skip</c>).</summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="value"/> is negative.</exception>
     public QueryOptions WithSkip(int value)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(value);
+
         Skip = value;
         return this;
     }
@@ -59,8 +65,14 @@ public sealed class QueryOptions
     /// Sets how many rows are fetched per request when auto-paging. Affects the number of
     /// round trips, not how many entities come back.
     /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="value"/> is less than 1. A page size of zero would request <c>$top=0</c>
+    /// forever without advancing.
+    /// </exception>
     public QueryOptions WithPageSize(int value)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+
         PageSize = value;
         return this;
     }

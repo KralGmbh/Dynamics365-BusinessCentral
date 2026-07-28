@@ -4,7 +4,15 @@ namespace Dynamics365.BusinessCentral.Client;
 
 internal static class HttpRequestExtensions
 {
-    private const string UserAgent = "Dynamics365.BusinessCentral.Client/1.0";
+    /// <summary>
+    /// Derived from the assembly version rather than hard-coded, so outbound requests always
+    /// identify the library version actually in use.
+    /// </summary>
+    private static readonly string UserAgent =
+        $"Dynamics365.BusinessCentral.Client/{ClientVersion()}";
+
+    private static string ClientVersion() =>
+        typeof(HttpRequestExtensions).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
     public static HttpRequestMessage Clone(this HttpRequestMessage original)
     {

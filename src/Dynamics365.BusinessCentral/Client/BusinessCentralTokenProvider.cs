@@ -88,8 +88,7 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
             var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(json, _jsonOptions)
                                 ?? throw new JsonException("Token response was null.");
 
-            var expiresAt = DateTime.UtcNow.AddSeconds(
-                tokenResponse.ExpiresIn - ExpirySafetyMarginSeconds);
+            var expiresAt = DateTime.UtcNow + CacheLifetime(tokenResponse.ExpiresIn);
 
             _token = new CachedAccessToken
             {
@@ -116,6 +115,29 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
         await _tokenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try { _token = null; }
         finally { _tokenLock.Release(); }
+    }
+
+    /// <summary>
+    /// How long a freshly issued token may be cached: its advertised lifetime less a safety
+    /// margin, so it is never used right at the edge of expiry.
+    /// </summary>
+    /// <remarks>
+    /// Subtracting a fixed margin would put the expiry in the past for any token whose
+    /// lifetime is shorter than the margin, marking it expired on arrival and forcing a
+    /// fresh request on every single call. For those, half the lifetime is used instead.
+    /// </remarks>
+    internal static TimeSpan CacheLifetime(int expiresInSeconds)
+    {
+        if (expiresInSeconds <= 0)
+            return TimeSpan.Zero;
+
+        var lifetime = TimeSpan.FromSeconds(expiresInSeconds);
+        var margin = TimeSpan.FromSeconds(ExpirySafetyMarginSeconds);
+
+        if (margin >= lifetime)
+            margin = TimeSpan.FromTicks(lifetime.Ticks / 2);
+
+        return lifetime - margin;
     }
 
     private void NotifyServedFromCache(DateTime expiresAt)

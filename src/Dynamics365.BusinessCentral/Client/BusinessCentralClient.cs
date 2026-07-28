@@ -195,9 +195,20 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         var baseOptions = new QueryOptions();
         options?.Invoke(baseOptions);
 
+        // $top=0 is a request for no rows at all.
+        if (baseOptions.Top == 0)
+            yield break;
+
         // Top has historically doubled as the page size here; PageSize now says it plainly
         // and wins when both are set.
         var pageSize = baseOptions.PageSize ?? baseOptions.Top ?? DefaultPageSize;
+
+        // Guards the loop below: with a non-positive page size the "short page" termination
+        // check can never fire, so it would request the same empty page forever. The public
+        // setters reject these values; this covers the internal ones.
+        if (pageSize <= 0)
+            yield break;
+
         var filterValue = filter?.Value ?? string.Empty;
         var skip = 0;
 
