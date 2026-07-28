@@ -95,7 +95,12 @@ Two paging implementations exist and must stay in agreement: `BusinessCentralCli
 
 ### Writes
 
-POST/PATCH/PUT send `Prefer: return=representation` and go through `ReadEntityOrEchoAsync`: a `204 NoContent` or empty body is a **success** that returns the payload that was sent, not an error. `DeleteAsync` accepts 200 or 204.
+Each of POST/PATCH/PUT has two overloads, distinguished purely by **generic arity**:
+
+- one-generic (`PostAsync<T>`) — payload and result share a type; `ReadEntityOrEchoAsync` returns the sent payload on `204`/empty body.
+- two-generic (`PostAsync<TPayload, TResult>`) — `ReadEntityOrDefaultAsync` returns `default` on `204`/empty body, since the payload cannot stand in for the result. `TResult` is deliberately unconstrained so `JsonElement` works.
+
+Arity is what keeps `PostAsync<dynamic>(path, payload)` binding to the one-generic form. `WriteOverloadTests` pins that; don't add an overload that changes arity resolution. Both forms send `Prefer: return=representation`, and `204` is a success in both. `DeleteAsync` accepts 200 or 204.
 
 ### Observability
 
@@ -117,4 +122,6 @@ Pattern: `TestBase.CreateClient(handler, observer?, configure?)` builds a real `
 
 ## Docs
 
-`README.md` and `src/Dynamics365.BusinessCentral/README.md` are byte-identical — the latter is the packed NuGet readme. Update both together when public API changes.
+`README.md` and `src/Dynamics365.BusinessCentral/README.md` are identical except for one line: the root file links `MIGRATION.md` relatively, the packed copy uses an absolute GitHub URL because relative links don't resolve on nuget.org. Update both together when public API changes.
+
+`MIGRATION.md` documents the 1.0 → 2.0 move. Add to it whenever a change alters behaviour silently — that file is the only place a silent change is discoverable.

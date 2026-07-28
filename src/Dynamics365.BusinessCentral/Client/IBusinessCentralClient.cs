@@ -158,6 +158,79 @@ public interface IBusinessCentralClient
         where T : class;
 
     /// <summary>
+    /// Creates an entity, deserializing the response into a type different from the payload.
+    /// </summary>
+    /// <remarks>
+    /// Use this when you post an anonymous object or DTO but want a typed response back —
+    /// the single-generic <see cref="PostAsync{T}"/> forces both to be the same type.
+    /// </remarks>
+    /// <typeparam name="TPayload">Type sent in the request body.</typeparam>
+    /// <typeparam name="TResult">Type to deserialize the response into.</typeparam>
+    /// <param name="path">Relative OData entity path where the entity should be created.</param>
+    /// <param name="payload">Object to serialize and send as the POST body.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// The created entity, or <see langword="default"/> when Business Central applied the
+    /// write but returned no representation (<c>204 No Content</c> or an empty body). That
+    /// means "created, but not echoed back" — not "failed"; failures throw.
+    /// <para>
+    /// For a reference <typeparamref name="TResult"/> this is <see langword="null"/>. For a
+    /// value type it is <c>default</c> — notably <c>default(JsonElement)</c>, whose
+    /// <c>ValueKind</c> is <c>Undefined</c>; check that rather than comparing to null.
+    /// </para>
+    /// </returns>
+    Task<TResult?> PostAsync<TPayload, TResult>(
+        string path,
+        TPayload payload,
+        CancellationToken cancellationToken = default)
+        where TPayload : class;
+
+    /// <summary>
+    /// Partially updates an entity, deserializing the response into a type different from
+    /// the payload.
+    /// </summary>
+    /// <typeparam name="TPayload">Type sent in the request body.</typeparam>
+    /// <typeparam name="TResult">Type to deserialize the response into.</typeparam>
+    /// <param name="path">Relative OData entity path.</param>
+    /// <param name="systemId">Entity key: a systemId, or an alternate key such as <c>No='1000'</c>.</param>
+    /// <param name="payload">Object to serialize and send as the PATCH body.</param>
+    /// <param name="ifMatch">ETag value for optimistic concurrency control (default "*").</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// The updated entity, or <see langword="default"/> when the server returned no
+    /// representation. Failures throw.
+    /// </returns>
+    Task<TResult?> PatchAsync<TPayload, TResult>(
+        string path,
+        string systemId,
+        TPayload payload,
+        string ifMatch = "*",
+        CancellationToken cancellationToken = default)
+        where TPayload : class;
+
+    /// <summary>
+    /// Replaces an entity, deserializing the response into a type different from the payload.
+    /// </summary>
+    /// <typeparam name="TPayload">Type sent in the request body.</typeparam>
+    /// <typeparam name="TResult">Type to deserialize the response into.</typeparam>
+    /// <param name="path">Relative OData entity path.</param>
+    /// <param name="systemId">Entity key: a systemId, or an alternate key such as <c>No='1000'</c>.</param>
+    /// <param name="payload">Object to serialize and send as the PUT body.</param>
+    /// <param name="ifMatch">ETag value for optimistic concurrency control (default "*").</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// The updated entity, or <see langword="default"/> when the server returned no
+    /// representation. Failures throw.
+    /// </returns>
+    Task<TResult?> PutAsync<TPayload, TResult>(
+        string path,
+        string systemId,
+        TPayload payload,
+        string ifMatch = "*",
+        CancellationToken cancellationToken = default)
+        where TPayload : class;
+
+    /// <summary>
     /// Executes a PUT request to fully replace an existing Business Central entity.
     /// </summary>
     /// <typeparam name="T">The entity type to serialize and deserialize.</typeparam>

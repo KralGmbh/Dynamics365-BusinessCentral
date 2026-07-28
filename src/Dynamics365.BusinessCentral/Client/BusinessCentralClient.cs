@@ -366,6 +366,69 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     }
 
     /// <inheritdoc />
+    public async Task<TResult?> PostAsync<TPayload, TResult>(
+        string path,
+        TPayload payload,
+        CancellationToken cancellationToken = default)
+        where TPayload : class
+    {
+        var url = _urlBuilder.BuildEntityUrl(path);
+
+        var req = CreateJsonRequest(HttpMethod.Post, url, payload);
+
+        req.AddReturnRepresentationPreference();
+
+        var res = await SendWithAuthRetryAsync(req, cancellationToken).ConfigureAwait(false);
+
+        return await ReadEntityOrDefaultAsync<TResult>(
+            res, "Failed to deserialize POST response.", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<TResult?> PatchAsync<TPayload, TResult>(
+        string path,
+        string systemId,
+        TPayload payload,
+        string ifMatch = "*",
+        CancellationToken cancellationToken = default)
+        where TPayload : class
+    {
+        var url = _urlBuilder.BuildEntityUrl(path, systemId);
+
+        var req = CreateJsonRequest(HttpMethod.Patch, url, payload);
+
+        req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+        req.AddReturnRepresentationPreference();
+
+        var res = await SendWithAuthRetryAsync(req, cancellationToken).ConfigureAwait(false);
+
+        return await ReadEntityOrDefaultAsync<TResult>(
+            res, "Failed to deserialize PATCH response.", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<TResult?> PutAsync<TPayload, TResult>(
+        string path,
+        string systemId,
+        TPayload payload,
+        string ifMatch = "*",
+        CancellationToken cancellationToken = default)
+        where TPayload : class
+    {
+        var url = _urlBuilder.BuildEntityUrl(path, systemId);
+
+        var req = CreateJsonRequest(HttpMethod.Put, url, payload);
+
+        req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+        req.AddReturnRepresentationPreference();
+
+        var res = await SendWithAuthRetryAsync(req, cancellationToken).ConfigureAwait(false);
+
+        return await ReadEntityOrDefaultAsync<TResult>(
+            res, "Failed to deserialize PUT response.", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task<T> PutAsync<T>(
         string path,
         string systemId,
@@ -438,6 +501,28 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             return payload;
 
         return Deserialize<T>(json, res, errorMessage);
+    }
+
+    /// <summary>
+    /// Response reader for the two-generic write overloads, where the payload cannot stand
+    /// in for the result. A 204 NoContent or empty body yields <see langword="default"/>,
+    /// which is how the caller learns the server applied the write without returning a
+    /// representation.
+    /// </summary>
+    private async Task<TResult?> ReadEntityOrDefaultAsync<TResult>(
+        HttpResponseMessage res,
+        string errorMessage,
+        CancellationToken cancellationToken)
+    {
+        if (res.StatusCode == HttpStatusCode.NoContent)
+            return default;
+
+        var json = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(json))
+            return default;
+
+        return Deserialize<TResult>(json, res, errorMessage);
     }
 
     private async Task<HttpResponseMessage> SendWithAuthRetryAsync(

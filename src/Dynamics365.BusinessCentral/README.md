@@ -12,6 +12,8 @@
 - Clean DI integration
 - No runtime dependencies beyond `HttpClient` and `System.Text.Json`
 
+Upgrading from 1.x? See the migration guide: https://github.com/kraldev/Dynamics365-BusinessCentral/blob/master/MIGRATION.md
+
 # 📦 Installation
 
 ```bash
@@ -168,6 +170,24 @@ await client.DeleteAsync("salesOrders", systemId);
 Writes send `Prefer: return=representation`. If the server answers `204 No Content`, the
 payload you sent is returned instead of throwing. Keys may be a `systemId` or an alternate
 key such as `No='1000'`.
+
+When the response type differs from the payload — posting an anonymous object and reading
+back an entity — use the two-generic overloads instead of `dynamic`:
+
+```csharp
+var created = await client.PostAsync<object, CreatedRow>(
+    "ldatSummary",
+    new { serialNo = "S1", productionOrderNo = "PO1" });
+
+// null means BC applied the write but returned no representation. Failures throw.
+if (created is null) { /* handle "created but not echoed" */ }
+```
+
+`TResult` is unconstrained, so `JsonElement` works when you have no model:
+
+```csharp
+var element = await client.PostAsync<object, JsonElement>("ldatSummary", payload);
+```
 
 # 🏢 Multiple companies
 
