@@ -1,4 +1,4 @@
-﻿namespace Dynamics365.BusinessCentral.Diagnostics;
+namespace Dynamics365.BusinessCentral.Diagnostics;
 
 internal sealed class NullBusinessCentralObserver : IBusinessCentralObserver
 {
@@ -11,6 +11,8 @@ internal sealed class NullBusinessCentralObserver : IBusinessCentralObserver
     public void OnTokenRequested() { }
 
     public void OnTokenRefreshed(BusinessCentralTokenInfo token) { }
+
+    public void OnTokenServedFromCache(BusinessCentralTokenInfo token) { }
 
     public void OnDeserializationFailed(BusinessCentralErrorInfo error) { }
 }

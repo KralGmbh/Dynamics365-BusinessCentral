@@ -1,7 +1,10 @@
 ﻿using Dynamics365.BusinessCentral.Client;
 using Dynamics365.BusinessCentral.Diagnostics;
 using Dynamics365.BusinessCentral.Options;
+using Dynamics365.BusinessCentral.Tests.Utils;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using System.Net;
 
 namespace Dynamics365.BusinessCentral.Tests;
 
@@ -85,6 +88,103 @@ public class ServiceCollectionExtensionsTests
         Assert.Equal("tenant", options!.Value.TenantId);
     }
 
+
+    [Fact]
+    public void Validation_Names_Every_Missing_Option()
+    {
+        var services = new ServiceCollection();
+
+        services.AddBusinessCentral(options =>
+        {
+            options.TenantId = "tenant";
+            options.ClientId = "";
+            options.ClientSecret = "  ";
+            options.BaseUrl = "https://test";
+            options.Company = "Test";
+            options.Scope = "scope";
+            options.TokenEndpoint = "https://auth/{TenantId}";
+        });
+
+        var provider = services.BuildServiceProvider();
+
+        var ex = Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<BusinessCentralOptions>>().Value);
+
+        var message = string.Join(" | ", ex.Failures);
+
+        Assert.Contains(nameof(BusinessCentralOptions.ClientId), message);
+        Assert.Contains(nameof(BusinessCentralOptions.ClientSecret), message);
+        Assert.DoesNotContain(nameof(BusinessCentralOptions.TenantId), message);
+    }
+
+    [Fact]
+    public void Validation_Rejects_Relative_BaseUrl()
+    {
+        var services = new ServiceCollection();
+
+        services.AddBusinessCentral(options =>
+        {
+            options.TenantId = "tenant";
+            options.ClientId = "client";
+            options.ClientSecret = "secret";
+            options.BaseUrl = "not-a-url";
+            options.Company = "Test";
+            options.Scope = "scope";
+            options.TokenEndpoint = "https://auth/{TenantId}";
+        });
+
+        var provider = services.BuildServiceProvider();
+
+        var ex = Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<BusinessCentralOptions>>().Value);
+
+        Assert.Contains("absolute URL", string.Join(" | ", ex.Failures));
+    }
+
+    [Fact]
+    public async Task Token_Cache_Is_Shared_Across_Resolved_Clients()
+    {
+        // Typed HTTP clients are transient, so the token cache must live on a singleton
+        // or every injection would re-authenticate.
+        var tokenCalls = 0;
+
+        var services = new ServiceCollection();
+
+        services.AddBusinessCentral(DefaultOptions);
+
+        // Configure the named handlers rather than re-registering the typed client,
+        // which would replace the registration under test.
+        services
+            .AddHttpClient(ServiceCollectionExtensions.TokenHttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new FakeHttpHandler(_ =>
+            {
+                Interlocked.Increment(ref tokenCalls);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+            }));
+
+        services
+            .AddHttpClient(ServiceCollectionExtensions.ClientHttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new FakeHttpHandler(_ =>
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"value\":[]}")
+                }));
+
+        var provider = services.BuildServiceProvider();
+
+        var first = provider.GetRequiredService<IBusinessCentralClient>();
+        var second = provider.GetRequiredService<IBusinessCentralClient>();
+
+        Assert.NotSame(first, second);
+
+        await first.QueryAsync<TestEntity>("orders", "true");
+        await second.QueryAsync<TestEntity>("orders", "true");
+
+        Assert.Equal(1, tokenCalls);
+    }
 
     private class TestObserver : IBusinessCentralObserver
     {
