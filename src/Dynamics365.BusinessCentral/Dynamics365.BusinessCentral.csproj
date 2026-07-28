@@ -32,6 +32,20 @@
         <Title>Dynamics365 Business Central</Title>
         <PackageIcon>bcclient.png</PackageIcon>
 
+        <!-- Shown on the nuget.org package page. Kept short and pointed at CHANGELOG.md
+             rather than duplicated, since nuget.org renders this as plain text. -->
+        <PackageReleaseNotes>
+            2.0.0 fixes six defects and reworks the API: typed queries via client.Query&lt;T&gt;(),
+            Retry-After aware throttling handling, streaming, $expand/$count, multi-company
+            support, and XML docs now shipped in the package.
+
+            Breaking changes — see the migration guide before upgrading:
+            https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/MIGRATION.md
+
+            Full changelog:
+            https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/CHANGELOG.md
+        </PackageReleaseNotes>
+
         <!-- Ship XML docs so consumers get IntelliSense for the public API. -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
 

@@ -124,4 +124,10 @@ Pattern: `TestBase.CreateClient(handler, observer?, configure?)` builds a real `
 
 `README.md` and `src/Dynamics365.BusinessCentral/README.md` are identical except for one line: the root file links `MIGRATION.md` relatively, the packed copy uses an absolute GitHub URL because relative links don't resolve on nuget.org. Update both together when public API changes.
 
-`MIGRATION.md` documents the 1.0 → 2.0 move. Add to it whenever a change alters behaviour silently — that file is the only place a silent change is discoverable.
+Three release docs, each with a distinct job — don't merge them:
+
+- `CHANGELOG.md` — **what** changed, every version, Keep a Changelog format. Add an entry under `## [Unreleased]` as part of the change itself, not at release time.
+- `MIGRATION.md` — **how** to upgrade across a breaking version. Add to it whenever a change alters behaviour *silently*; that file is the only place such a change is discoverable.
+- `<PackageReleaseNotes>` in the csproj — the nuget.org summary. Keep it to a few lines that link the other two; nuget.org renders it as plain text, so never duplicate content there.
+
+Releasing: bump `<Version>`, move `[Unreleased]` to the new version with a date, refresh `<PackageReleaseNotes>`, then tag. `.github/workflows/nuget.yml` packs and pushes on published GitHub releases.

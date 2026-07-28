@@ -12,7 +12,7 @@
 - Clean DI integration
 - No runtime dependencies beyond `HttpClient` and `System.Text.Json`
 
-Upgrading from 1.x? See the migration guide: https://github.com/kraldev/Dynamics365-BusinessCentral/blob/master/MIGRATION.md
+Upgrading from 1.x? See the [migration guide](https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/MIGRATION.md). Full history in the [changelog](https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/CHANGELOG.md).
 
 # 📦 Installation
 

@@ -12,7 +12,7 @@
 - Clean DI integration
 - No runtime dependencies beyond `HttpClient` and `System.Text.Json`
 
-Upgrading from 1.x? See [MIGRATION.md](MIGRATION.md).
+Upgrading from 1.x? See [MIGRATION.md](MIGRATION.md). Full history in [CHANGELOG.md](CHANGELOG.md).
 
 # 📦 Installation
 
