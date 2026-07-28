@@ -258,11 +258,91 @@ public partial class ClientTests
 
         var payload = new TestPatchEntity { Id = "abc 123", Name = "Test" };
 
-        await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
-            client.PatchAsync("orders", "abc 123", payload));
+        var result = await client.PatchAsync("orders", "abc 123", payload);
 
         Assert.NotNull(capturedUrl);
         Assert.Contains("abc%20123", capturedUrl);
+
+        // 204 NoContent is a successful write; the sent payload is echoed back.
+        Assert.Same(payload, result);
+    }
+
+    [Fact]
+    public async Task PatchAsync_Preserves_Alternate_Key_Syntax()
+    {
+        string? capturedUrl = null;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            capturedUrl = req.RequestUri!.AbsoluteUri;
+
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
+        });
+
+        await client.PatchAsync("salesOrders", "No='1000'", new TestPatchEntity { Id = "1", Name = "x" });
+
+        Assert.NotNull(capturedUrl);
+
+        // Quotes and '=' are OData key syntax and must survive verbatim.
+        Assert.Contains("salesOrders(No='1000')", capturedUrl);
+        Assert.DoesNotContain("%27", capturedUrl);
+        Assert.DoesNotContain("%3D", capturedUrl);
+    }
+
+    [Fact]
+    public async Task Writes_Ask_For_Return_Representation()
+    {
+        HttpRequestMessage? captured = null;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            captured = req;
+
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
+        });
+
+        await client.PostAsync("orders", new TestPatchEntity { Id = "1", Name = "x" });
+
+        Assert.NotNull(captured);
+        Assert.Contains("return=representation", captured!.Headers.GetValues("Prefer"));
+    }
+
+    [Fact]
+    public async Task Writes_Return_Payload_On_Empty_Body()
+    {
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("")
+            };
+        });
+
+        var payload = new TestPatchEntity { Id = "1", Name = "x" };
+
+        var posted = await client.PostAsync("orders", payload);
+        var put = await client.PutAsync("orders", "1", payload);
+
+        Assert.Same(payload, posted);
+        Assert.Same(payload, put);
     }
 
     [Fact]
@@ -311,8 +391,7 @@ public partial class ClientTests
 
         var payload = new TestPatchEntity { Id = "test-id", Name = "Updated" };
 
-        await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
-            client.PatchAsync("orders", "test-id", payload));
+        await client.PatchAsync("orders", "test-id", payload);
 
         Assert.NotNull(capturedBody);
 
@@ -1586,10 +1665,45 @@ public partial class ClientTests
         var ex = await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
             client.QueryAsync<TestEntity>("orders", "true"));
 
-        // Assert
+        // Assert — Message stays a single line; the structured detail lives on properties.
         Assert.Contains("Resource not found", ex.Message);
-        Assert.Contains("BadRequest_ResourceNotFound", ex.Message);
-        Assert.Contains("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", ex.Message);
+        Assert.DoesNotContain(System.Environment.NewLine, ex.Message);
+
+        Assert.Equal("BadRequest_ResourceNotFound", ex.ODataErrorCode);
+        Assert.Equal("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", ex.CorrelationId);
+
+        // ToString() is where everything shows up.
+        var detailed = ex.ToString();
+        Assert.Contains("BadRequest_ResourceNotFound", detailed);
+        Assert.Contains("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", detailed);
+        Assert.Contains(bcError.Trim(), detailed);
+    }
+
+    [Fact]
+    public async Task Exception_Message_Stays_A_Single_Line()
+    {
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            return new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent(new string('x', 5000))
+            };
+        });
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.QueryAsync<TestEntity>("orders", "true"));
+
+        // A 5 KB body must not end up in the log line.
+        Assert.DoesNotContain("xxxx", ex.Message);
+        Assert.Contains("GET", ex.Message);
+        Assert.Contains("500", ex.Message);
+        Assert.Contains("xxxx", ex.ResponseBody);
     }
 
     [Fact]
@@ -1752,6 +1866,283 @@ public partial class ClientTests
             client.DeleteAsync("orders", "1"));
     }
 
+
+    #region Raw URL Tests
+
+    // The README has documented QueryRawAsync<JsonElement> since 1.0, but the old
+    // `where TResponse : class` constraint meant it never compiled for consumers.
+    [Fact]
+    public async Task QueryRawAsync_Accepts_A_Value_Type_Response()
+    {
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+            TestBase.Json("{\"value\":[{\"no\":\"1000\"}]}")));
+
+        var raw = await client.QueryRawAsync<JsonElement>("salesOrders?$top=5");
+
+        Assert.Equal(JsonValueKind.Object, raw.ValueKind);
+        Assert.Equal("1000", raw.GetProperty("value")[0].GetProperty("no").GetString());
+    }
+
+    [Fact]
+    public async Task QueryRawAsync_Still_Accepts_Reference_Types()
+    {
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+            TestBase.Json("{\"id\":7,\"name\":\"Seven\"}")));
+
+        var typed = await client.QueryRawAsync<TestRawResponse>("orders/raw");
+
+        Assert.Equal(7, typed.Id);
+    }
+
+
+    [Fact]
+    public async Task QueryRawAsync_Preserves_Query_String()
+    {
+        string? capturedUrl = null;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            capturedUrl = req.RequestUri!.AbsoluteUri;
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":1,\"name\":\"x\"}")
+            };
+        });
+
+        await client.QueryRawAsync<TestRawResponse>("salesOrders?$top=5");
+
+        Assert.NotNull(capturedUrl);
+        Assert.Contains("salesOrders?$top=5", capturedUrl);
+        Assert.DoesNotContain("%3F", capturedUrl);
+        Assert.DoesNotContain("%24", capturedUrl);
+    }
+
+    [Fact]
+    public async Task QueryRawAsync_Preserves_Path_Separators()
+    {
+        string? capturedUrl = null;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            capturedUrl = req.RequestUri!.AbsoluteUri;
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":1,\"name\":\"x\"}")
+            };
+        });
+
+        await client.QueryRawAsync<TestRawResponse>("orders/raw");
+
+        Assert.NotNull(capturedUrl);
+        Assert.Contains("orders/raw", capturedUrl);
+        Assert.DoesNotContain("%2F", capturedUrl);
+    }
+
+    [Fact]
+    public async Task Query_Preserves_Navigation_Path_But_Encodes_Spaces()
+    {
+        string? capturedUrl = null;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            capturedUrl = req.RequestUri!.AbsoluteUri;
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            };
+        });
+
+        await client.QueryAsync<TestEntity>("salesOrders/Sales Lines", "true");
+
+        Assert.NotNull(capturedUrl);
+        Assert.Contains("salesOrders/Sales%20Lines", capturedUrl);
+    }
+
+    #endregion
+
+    #region Server-Driven Paging Tests
+
+    [Fact]
+    public async Task QueryAll_Follows_ODataNextLink()
+    {
+        var urls = new List<string>();
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            urls.Add(req.RequestUri!.AbsoluteUri);
+
+            // First page is short *and* carries a nextLink — the old "short page means
+            // done" rule would have truncated the result here.
+            var body = urls.Count == 1
+                ? "{\"value\":[{\"id\":1}],\"@odata.nextLink\":\"https://test/page2\"}"
+                : "{\"value\":[{\"id\":2}]}";
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body)
+            };
+        });
+
+        var result = await client.QueryAllAsync<TestEntity>("orders");
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(2, urls.Count);
+        Assert.Equal("https://test/page2", urls[1]);
+    }
+
+    [Fact]
+    public async Task QueryAll_Stops_On_Short_Page_Without_NextLink()
+    {
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            dataCalls++;
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[{\"id\":1},{\"id\":2}]}")
+            };
+        });
+
+        var result = await client.QueryAllAsync<TestEntity>("orders", options: o => o.WithTop(10));
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(1, dataCalls);
+    }
+
+    [Fact]
+    public async Task QueryAll_Pages_Until_Short_Page()
+    {
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            dataCalls++;
+
+            // Two full pages of 2, then a short page.
+            var body = dataCalls <= 2
+                ? "{\"value\":[{\"id\":1},{\"id\":2}]}"
+                : "{\"value\":[{\"id\":3}]}";
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body)
+            };
+        });
+
+        var result = await client.QueryAllAsync<TestEntity>("orders", options: o => o.WithTop(2));
+
+        Assert.Equal(5, result.Count);
+        Assert.Equal(3, dataCalls);
+    }
+
+    #endregion
+
+    #region Observer Reporting Tests
+
+    [Fact]
+    public async Task Failed_Request_Is_Reported_To_Observer_Exactly_Once()
+    {
+        var observer = new TestObserver();
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            return new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("{\"error\":{\"code\":\"Bad\",\"message\":\"nope\"}}")
+            };
+        }, observer);
+
+        await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
+            client.QueryAsync<TestEntity>("orders", "true"));
+
+        Assert.Single(observer.Failures);
+        Assert.Equal(400, observer.Failures[0].StatusCode);
+        Assert.Contains("nope", observer.Failures[0].ResponseBody);
+    }
+
+    [Fact]
+    public async Task Unauthorized_Retry_Reports_One_Failure_Then_Success()
+    {
+        var observer = new TestObserver();
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            dataCalls++;
+
+            if (dataCalls == 1)
+                return new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                {
+                    Content = new StringContent("unauthorized")
+                };
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"value\":[]}")
+            };
+        }, observer);
+
+        await client.QueryAsync<TestEntity>("orders", "true");
+
+        Assert.Single(observer.Failures);
+        Assert.Equal(401, observer.Failures[0].StatusCode);
+        Assert.Contains("success:200", observer.Events);
+    }
+
+    #endregion
 
     #region Test Helper Classes
 

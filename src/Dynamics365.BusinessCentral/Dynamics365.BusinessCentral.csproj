@@ -1,13 +1,13 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
-        
+
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>1.0.0</Version>
+        <Version>2.0.0-alpha</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
 
@@ -17,8 +17,8 @@
 
         <PackageTags>Dynamics365 BusinessCentral OData Client</PackageTags>
 
-        <PackageProjectUrl>https://github.com/kraldev/Dynamics365-BusinessCentral</PackageProjectUrl>
-        <RepositoryUrl>https://github.com/kraldev/Dynamics365-BusinessCentral</RepositoryUrl>
+        <PackageProjectUrl>https://github.com/KralGmbh/Dynamics365-BusinessCentral</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/KralGmbh/Dynamics365-BusinessCentral</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
 
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -31,11 +31,52 @@
 
         <Title>Dynamics365 Business Central</Title>
         <PackageIcon>bcclient.png</PackageIcon>
+
+        <!-- Shown on the nuget.org package page. Kept short and pointed at CHANGELOG.md
+             rather than duplicated, since nuget.org renders this as plain text. -->
+        <PackageReleaseNotes>
+            PRERELEASE — 2.0.0-alpha is published for validation against real Business
+            Central environments. Not recommended for production until 2.0.0 stable.
+
+            2.0.0 fixes six defects and reworks the API: typed queries via client.Query&lt;T&gt;(),
+            Retry-After aware throttling handling, streaming, $expand/$count, multi-company
+            support, and XML docs now shipped in the package.
+
+            Breaking changes — see the migration guide before upgrading:
+            https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/MIGRATION.md
+
+            Full changelog:
+            https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/CHANGELOG.md
+        </PackageReleaseNotes>
+
+        <!-- Ship XML docs so consumers get IntelliSense for the public API. -->
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+        <!-- SourceLink is built into the .NET 8+ SDK; these make the snupkg actually
+             usable for step-into debugging. -->
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
     </PropertyGroup>
 
-    <ItemGroup>
-        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
+    <!-- Match the dependency major to the target framework rather than pinning every
+         TFM to the 8.0.0 floor. -->
+    <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.0" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.0" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.0" />
     </ItemGroup>
 
     <ItemGroup>

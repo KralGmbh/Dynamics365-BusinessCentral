@@ -1,4 +1,5 @@
-﻿using Dynamics365.BusinessCentral.OData;
+using Dynamics365.BusinessCentral.OData;
+using System.Text;
 
 namespace Dynamics365.BusinessCentral.Client;
 
@@ -15,12 +16,39 @@ internal sealed class BusinessCentralUrlBuilder
 
     public string BuildEntityUrl(string path)
     {
-        return $"{BuildCompanyBase()}/{Encode(path)}";
+        return $"{BuildCompanyBase()}/{EncodePath(path)}";
     }
 
     public string BuildEntityUrl(string path, string key)
     {
-        return $"{BuildCompanyBase()}/{Encode(path)}({Encode(key)})";
+        return $"{BuildCompanyBase()}/{EncodePath(path)}({EncodeKey(key)})";
+    }
+
+    /// <summary>
+    /// Builds a URL against the service root, i.e. without the <c>Company('...')</c>
+    /// segment. Used for tenant-level entity sets such as the company list itself.
+    /// </summary>
+    public string BuildServiceRootUrl(string path)
+    {
+        return $"{_baseUrl}/{EncodePath(path)}";
+    }
+
+    /// <summary>
+    /// Builds a URL from a caller-supplied relative OData URL that may already carry
+    /// its own query string. Path segments are encoded individually; everything after
+    /// the first '?' is passed through verbatim because the caller owns it.
+    /// </summary>
+    public string BuildRawUrl(string path)
+    {
+        var split = path.IndexOf('?');
+
+        if (split < 0)
+            return BuildEntityUrl(path);
+
+        var pathPart = path[..split];
+        var queryPart = path[(split + 1)..];
+
+        return $"{BuildCompanyBase()}/{EncodePath(pathPart)}?{queryPart}";
     }
 
     public string BuildQueryUrl(
@@ -70,6 +98,19 @@ internal sealed class BusinessCentralUrlBuilder
             query.Add("$orderby=" + Uri.EscapeDataString(options.OrderBy));
         }
 
+        // Expand — joined verbatim so nested syntax such as
+        // "salesOrderLines($select=lineNo)" survives.
+        if (options.Expand.Count > 0)
+        {
+            query.Add("$expand=" + string.Join(",", options.Expand).Replace(" ", "%20"));
+        }
+
+        // Count
+        if (options.IncludeCount)
+        {
+            query.Add("$count=true");
+        }
+
         if (query.Count > 0)
         {
             url += "?" + string.Join("&", query);
@@ -84,8 +125,63 @@ internal sealed class BusinessCentralUrlBuilder
         return $"{_baseUrl}/Company('{encodedCompany}')";
     }
 
-    private static string Encode(string value)
+    /// <summary>
+    /// Encodes each path segment separately so '/' keeps its meaning as a segment
+    /// separator (navigation properties, nested paths) while spaces and other unsafe
+    /// characters are still escaped.
+    /// </summary>
+    private static string EncodePath(string path)
     {
-        return Uri.EscapeDataString(value);
+        if (string.IsNullOrEmpty(path))
+            return path;
+
+        var segments = path.Split('/');
+
+        for (var i = 0; i < segments.Length; i++)
+            segments[i] = Uri.EscapeDataString(segments[i]);
+
+        return string.Join("/", segments);
     }
+
+    /// <summary>
+    /// Encodes an OData entity key. Unlike <see cref="Uri.EscapeDataString(string)"/> this keeps
+    /// the characters that make up OData key syntax — quotes, '=', ',' and parentheses —
+    /// so alternate keys such as <c>No='1000'</c> survive intact, while spaces and other
+    /// unsafe characters are still percent-encoded.
+    /// </summary>
+    private static string EncodeKey(string key)
+    {
+        if (string.IsNullOrEmpty(key))
+            return key;
+
+        var result = new StringBuilder(key.Length);
+        var i = 0;
+
+        while (i < key.Length)
+        {
+            if (IsKeySafe(key[i]))
+            {
+                result.Append(key[i]);
+                i++;
+                continue;
+            }
+
+            // Escape a whole run at once so surrogate pairs are never split
+            // across two EscapeDataString calls.
+            var start = i;
+            while (i < key.Length && !IsKeySafe(key[i]))
+                i++;
+
+            result.Append(Uri.EscapeDataString(key[start..i]));
+        }
+
+        return result.ToString();
+    }
+
+    private static bool IsKeySafe(char c) =>
+        c is >= 'A' and <= 'Z' ||
+        c is >= 'a' and <= 'z' ||
+        c is >= '0' and <= '9' ||
+        c is '-' or '.' or '_' or '~' ||
+        c is '\'' or '=' or ',' or '(' or ')';
 }

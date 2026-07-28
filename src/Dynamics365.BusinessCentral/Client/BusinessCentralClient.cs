@@ -1,54 +1,124 @@
-﻿using Dynamics365.BusinessCentral.Diagnostics;
+using Dynamics365.BusinessCentral.Diagnostics;
 using Dynamics365.BusinessCentral.Errors;
 using Dynamics365.BusinessCentral.OData;
 using Dynamics365.BusinessCentral.Options;
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace Dynamics365.BusinessCentral.Client;
 
-public sealed class BusinessCentralClient : IBusinessCentralClient
+/// <summary>
+/// Default <see cref="IBusinessCentralClient"/> implementation.
+/// </summary>
+public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCentralQueryExecutor
 {
     private readonly HttpClient _http;
     private readonly BusinessCentralOptions _options;
     private readonly BusinessCentralUrlBuilder _urlBuilder;
+    private readonly BusinessCentralTokenProvider _tokenProvider;
     private readonly IBusinessCentralObserver _observer;
-
-    private readonly SemaphoreSlim _tokenLock = new(1, 1);
-    private CachedAccessToken? _token;
+    private readonly string _company;
 
     private const string BearerScheme = "Bearer";
 
+    /// <summary>Default page size used when auto-paging.</summary>
+    private const int DefaultPageSize = 1000;
+
     private static readonly JsonSerializerOptions _jsonOptions = BusinessCentralJson.Options;
 
+    /// <summary>Creates a client for the company configured in <paramref name="options"/>.</summary>
+    /// <param name="http">HTTP client used for data requests.</param>
+    /// <param name="options">Connection settings.</param>
+    /// <param name="observer">Optional diagnostics observer.</param>
     public BusinessCentralClient(
         HttpClient http,
         IOptions<BusinessCentralOptions> options,
         IBusinessCentralObserver? observer = null)
+        : this(http, options, null, observer)
+    {
+    }
+
+    internal BusinessCentralClient(
+        HttpClient http,
+        IOptions<BusinessCentralOptions> options,
+        BusinessCentralTokenProvider? tokenProvider,
+        IBusinessCentralObserver? observer)
     {
         _http = http;
         _options = options.Value;
-
         _observer = observer ?? new NullBusinessCentralObserver();
+        _company = _options.Company;
 
-        _http.Timeout = TimeSpan.FromSeconds(100);
+        // No mutation of the supplied HttpClient: it may be pooled or shared, and setting
+        // Timeout/DefaultRequestHeaders after first use throws. Per-request headers are
+        // applied in HttpRequestExtensions.AddJsonHeaders instead.
+        _tokenProvider = tokenProvider ?? new BusinessCentralTokenProvider(http, options, _observer);
 
-        _http.DefaultRequestHeaders.Accept.Clear();
-        _http.DefaultRequestHeaders.Accept.Add(
-            new MediaTypeWithQualityHeaderValue("application/json"));
-
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Dynamics365.BusinessCentral.Client/1.0");
-
-        _urlBuilder = new BusinessCentralUrlBuilder(
-            _options.BaseUrl,
-            _options.Company);
+        _urlBuilder = new BusinessCentralUrlBuilder(_options.ResolvedBaseUrl, _company);
     }
 
+    /// <summary>Copy constructor used by <see cref="ForCompany"/>.</summary>
+    private BusinessCentralClient(BusinessCentralClient source, string company)
+    {
+        _http = source._http;
+        _options = source._options;
+        _observer = source._observer;
+        _tokenProvider = source._tokenProvider;
+        _company = company;
 
+        _urlBuilder = new BusinessCentralUrlBuilder(source._options.ResolvedBaseUrl, company);
+    }
+
+    /// <inheritdoc />
+    public string Company => _company;
+
+    /// <inheritdoc />
+    public IBusinessCentralClient ForCompany(string company)
+    {
+        if (string.IsNullOrWhiteSpace(company))
+            throw new ArgumentException("Company must not be empty.", nameof(company));
+
+        return string.Equals(company, _company, StringComparison.Ordinal)
+            ? this
+            : new BusinessCentralClient(this, company);
+    }
+
+    /// <inheritdoc />
+    public IBusinessCentralQuery<TEntity> Query<TEntity>() =>
+        new BusinessCentralQuery<TEntity>(this, EntityPath.For<TEntity>());
+
+    /// <inheritdoc />
+    public IBusinessCentralQuery<TEntity> Query<TEntity>(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            throw new ArgumentException("Path must not be empty.", nameof(path));
+
+        return new BusinessCentralQuery<TEntity>(this, path);
+    }
+
+    /// <inheritdoc />
+    public async Task<List<BusinessCentralCompany>> GetCompaniesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        // The company list lives at the service root, not under Company('...').
+        var url = _urlBuilder.BuildServiceRootUrl("Company");
+
+        using var res = await SendWithAuthRetryAsync(
+            () => CreateJsonRequest(HttpMethod.Get, url), cancellationToken).ConfigureAwait(false);
+
+        var wrapper = await DeserializeAsync<ODataResponse<BusinessCentralCompany>>(
+            res,
+            "Failed to deserialize the Business Central company list.",
+            cancellationToken).ConfigureAwait(false);
+
+        return wrapper.Value;
+    }
+
+    /// <inheritdoc />
     public Task<List<TEntity>> QueryAsync<TEntity>(
         string path,
         ODataFilter? filter = null,
@@ -57,6 +127,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         CancellationToken cancellationToken = default)
         => QueryAsync<TEntity>(path, filter?.Value ?? string.Empty, options, select, cancellationToken);
 
+    /// <inheritdoc />
     public async Task<List<TEntity>> QueryAsync<TEntity>(
         string path,
         string filter,
@@ -67,27 +138,31 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         var queryOptions = new QueryOptions();
         options?.Invoke(queryOptions);
 
-        var res = await SendAsync(path, filter, queryOptions, select, cancellationToken);
-        var wrapper = await DeserializeAsync<ODataWrapper<TEntity>>(
-            res,
-            "Failed to deserialize Business Central response.",
-            cancellationToken);
+        var page = await FetchPageAsync<TEntity>(path, filter, queryOptions, select, cancellationToken)
+            .ConfigureAwait(false);
 
-        return wrapper.Value;
+        return page.Value;
     }
 
+    /// <inheritdoc />
     public async Task<TResponse> QueryRawAsync<TResponse>(
         string path,
         CancellationToken cancellationToken = default)
-        where TResponse : class
     {
-        var url = _urlBuilder.BuildEntityUrl(path);
+        // BuildRawUrl (not BuildEntityUrl) so a caller-supplied query string such as
+        // "salesOrders?$top=5" survives instead of being percent-encoded into the path.
+        var url = _urlBuilder.BuildRawUrl(path);
 
-        var req = CreateJsonRequest(HttpMethod.Get, url);
+        using var res = await SendWithAuthRetryAsync(
+            () => CreateJsonRequest(HttpMethod.Get, url), cancellationToken).ConfigureAwait(false);
 
-        return await SendWithRetryAndDeserializeAsync<TResponse>(req, cancellationToken);
+        return await DeserializeAsync<TResponse>(
+            res,
+            "Failed to deserialize Business Central response.",
+            cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task<List<TEntity>> QueryAllAsync<TEntity>(
         string path,
         ODataFilter? filter = null,
@@ -96,36 +171,150 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         CancellationToken cancellationToken = default)
     {
         var all = new List<TEntity>();
-        var skip = 0;
 
-        var baseOptions = new QueryOptions();
-        options?.Invoke(baseOptions);
-
-        var pageSize = baseOptions.Top ?? 1000;
-
-        while (true)
+        await foreach (var entity in QueryStreamAsync<TEntity>(path, filter, options, select, cancellationToken)
+                           .ConfigureAwait(false))
         {
-            var page = await QueryAsync<TEntity>(
-                path,
-                filter,
-                o =>
-                {
-                    o.WithTop(pageSize).WithSkip(skip);
-                    if (baseOptions.OrderBy != null)
-                        o.OrderBy = baseOptions.OrderBy;
-                },
-                select,
-                cancellationToken);
-
-            all.AddRange(page);
-
-            if (page.Count < pageSize)
-                break;
-
-            skip += page.Count;
+            all.Add(entity);
         }
 
         return all;
+    }
+
+    /// <inheritdoc />
+    public async IAsyncEnumerable<TEntity> QueryStreamAsync<TEntity>(
+        string path,
+        ODataFilter? filter = null,
+        Action<QueryOptions>? options = null,
+        IEnumerable<string>? select = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var baseOptions = new QueryOptions();
+        options?.Invoke(baseOptions);
+
+        // $top=0 is a request for no rows at all.
+        if (baseOptions.Top == 0)
+            yield break;
+
+        // Top has historically doubled as the page size here; PageSize now says it plainly
+        // and wins when both are set.
+        var pageSize = baseOptions.PageSize ?? baseOptions.Top ?? DefaultPageSize;
+
+        // Guards the loop below: with a non-positive page size the "short page" termination
+        // check can never fire, so it would request the same empty page forever. The public
+        // setters reject these values; this covers the internal ones.
+        if (pageSize <= 0)
+            yield break;
+
+        var filterValue = filter?.Value ?? string.Empty;
+
+        // Honour a caller-supplied $skip as the starting offset instead of silently
+        // restarting from the first page.
+        var skip = baseOptions.Skip ?? 0;
+
+        var page = await FetchPageAsync<TEntity>(
+                path, filterValue, PageOptions(baseOptions, pageSize, skip), select, cancellationToken)
+            .ConfigureAwait(false);
+
+        var serverDriven = false;
+
+        while (true)
+        {
+            var inPage = 0;
+
+            foreach (var entity in page.Value)
+            {
+                yield return entity;
+                inPage++;
+            }
+
+            // Server-driven paging wins: when Business Central sends @odata.nextLink it
+            // decides the page size, so a short page is not the end of the collection.
+            if (!string.IsNullOrWhiteSpace(page.NextLink))
+            {
+                serverDriven = true;
+
+                page = await FetchNextPageAsync<TEntity>(page.NextLink!, cancellationToken)
+                    .ConfigureAwait(false);
+
+                continue;
+            }
+
+            if (serverDriven)
+                yield break;
+
+            // No nextLink and a short page means the collection is exhausted.
+            if (inPage < pageSize)
+                yield break;
+
+            skip += inPage;
+
+            page = await FetchPageAsync<TEntity>(
+                    path, filterValue, PageOptions(baseOptions, pageSize, skip), select, cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static QueryOptions PageOptions(QueryOptions baseOptions, int pageSize, int skip)
+    {
+        var options = new QueryOptions
+        {
+            Top = pageSize,
+            Skip = skip,
+            IncludeCount = baseOptions.IncludeCount
+        };
+
+        if (baseOptions.OrderBy != null)
+            options.OrderBy = baseOptions.OrderBy;
+
+        if (baseOptions.Expand.Count > 0)
+            options.WithExpand([.. baseOptions.Expand]);
+
+        return options;
+    }
+
+    async Task<ODataResponse<TEntity>> IBusinessCentralQueryExecutor.FetchPageAsync<TEntity>(
+        string path,
+        string filter,
+        QueryOptions options,
+        IEnumerable<string>? select,
+        CancellationToken cancellationToken)
+        => await FetchPageAsync<TEntity>(path, filter, options, select, cancellationToken).ConfigureAwait(false);
+
+    async Task<ODataResponse<TEntity>> IBusinessCentralQueryExecutor.FetchNextPageAsync<TEntity>(
+        string absoluteUrl,
+        CancellationToken cancellationToken)
+        => await FetchNextPageAsync<TEntity>(absoluteUrl, cancellationToken).ConfigureAwait(false);
+
+    private async Task<ODataResponse<TEntity>> FetchPageAsync<TEntity>(
+        string path,
+        string filter,
+        QueryOptions options,
+        IEnumerable<string>? select,
+        CancellationToken cancellationToken)
+    {
+        var url = _urlBuilder.BuildQueryUrl(path, filter, options, select);
+
+        using var res = await SendWithAuthRetryAsync(
+            () => CreateJsonRequest(HttpMethod.Get, url), cancellationToken).ConfigureAwait(false);
+
+        return await DeserializeAsync<ODataResponse<TEntity>>(
+            res,
+            "Failed to deserialize Business Central response.",
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<ODataResponse<TEntity>> FetchNextPageAsync<TEntity>(
+        string absoluteUrl,
+        CancellationToken cancellationToken)
+    {
+        using var res = await SendWithAuthRetryAsync(
+            () => CreateJsonRequest(HttpMethod.Get, absoluteUrl), cancellationToken).ConfigureAwait(false);
+
+        return await DeserializeAsync<ODataResponse<TEntity>>(
+            res,
+            "Failed to deserialize Business Central response.",
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static HttpRequestMessage CreateJsonRequest(HttpMethod method, string url, object? payload = null)
@@ -144,6 +333,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         return req;
     }
 
+    /// <inheritdoc />
     public async Task<T> PatchAsync<T>(
         string path,
         string systemId,
@@ -154,30 +344,21 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
     {
         var url = _urlBuilder.BuildEntityUrl(path, systemId);
 
-        var req = CreateJsonRequest(HttpMethod.Patch, url, payload);
+        using var res = await SendWithAuthRetryAsync(
+            () =>
+            {
+                var req = CreateJsonRequest(HttpMethod.Patch, url, payload);
+                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.AddReturnRepresentationPreference();
+                return req;
+            },
+            cancellationToken).ConfigureAwait(false);
 
-        req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
-
-        var res = await SendWithAuthRetryAsync(req, cancellationToken);
-
-        if (res.StatusCode == HttpStatusCode.NoContent)
-        {
-            throw new BusinessCentralServerException(
-                "PATCH returned 204 NoContent – no entity was returned.",
-                res.StatusCode,
-                req.Method.Method,
-                req.RequestUri!.ToString(),
-                null,
-                null,
-                null);
-        }
-
-        return await DeserializeAsync<T>(
-            res,
-            "Failed to deserialize PATCH response.",
-            cancellationToken);
+        return await ReadEntityOrEchoAsync(
+            res, payload, "Failed to deserialize PATCH response.", cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task<T> PostAsync<T>(
         string path,
         T payload,
@@ -186,28 +367,92 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
     {
         var url = _urlBuilder.BuildEntityUrl(path);
 
-        var req = CreateJsonRequest(HttpMethod.Post, url, payload);
+        using var res = await SendWithAuthRetryAsync(
+            () =>
+            {
+                var req = CreateJsonRequest(HttpMethod.Post, url, payload);
+                req.AddReturnRepresentationPreference();
+                return req;
+            },
+            cancellationToken).ConfigureAwait(false);
 
-        var res = await SendWithAuthRetryAsync(req, cancellationToken);
-
-        if (res.StatusCode == HttpStatusCode.NoContent)
-        {
-            throw new BusinessCentralServerException(
-                "POST returned 204 NoContent – expected created entity.",
-                res.StatusCode,
-                req.Method.Method,
-                req.RequestUri!.ToString(),
-                null,
-                null,
-                null);
-        }
-
-        return await DeserializeAsync<T>(
-            res,
-            "Failed to deserialize POST response.",
-            cancellationToken);
+        return await ReadEntityOrEchoAsync(
+            res, payload, "Failed to deserialize POST response.", cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
+    public async Task<TResult?> PostAsync<TPayload, TResult>(
+        string path,
+        TPayload payload,
+        CancellationToken cancellationToken = default)
+        where TPayload : class
+    {
+        var url = _urlBuilder.BuildEntityUrl(path);
+
+        using var res = await SendWithAuthRetryAsync(
+            () =>
+            {
+                var req = CreateJsonRequest(HttpMethod.Post, url, payload);
+                req.AddReturnRepresentationPreference();
+                return req;
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        return await ReadEntityOrDefaultAsync<TResult>(
+            res, "Failed to deserialize POST response.", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<TResult?> PatchAsync<TPayload, TResult>(
+        string path,
+        string systemId,
+        TPayload payload,
+        string ifMatch = "*",
+        CancellationToken cancellationToken = default)
+        where TPayload : class
+    {
+        var url = _urlBuilder.BuildEntityUrl(path, systemId);
+
+        using var res = await SendWithAuthRetryAsync(
+            () =>
+            {
+                var req = CreateJsonRequest(HttpMethod.Patch, url, payload);
+                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.AddReturnRepresentationPreference();
+                return req;
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        return await ReadEntityOrDefaultAsync<TResult>(
+            res, "Failed to deserialize PATCH response.", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<TResult?> PutAsync<TPayload, TResult>(
+        string path,
+        string systemId,
+        TPayload payload,
+        string ifMatch = "*",
+        CancellationToken cancellationToken = default)
+        where TPayload : class
+    {
+        var url = _urlBuilder.BuildEntityUrl(path, systemId);
+
+        using var res = await SendWithAuthRetryAsync(
+            () =>
+            {
+                var req = CreateJsonRequest(HttpMethod.Put, url, payload);
+                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.AddReturnRepresentationPreference();
+                return req;
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        return await ReadEntityOrDefaultAsync<TResult>(
+            res, "Failed to deserialize PUT response.", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task<T> PutAsync<T>(
         string path,
         string systemId,
@@ -218,30 +463,21 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
     {
         var url = _urlBuilder.BuildEntityUrl(path, systemId);
 
-        var req = CreateJsonRequest(HttpMethod.Put, url, payload);
+        using var res = await SendWithAuthRetryAsync(
+            () =>
+            {
+                var req = CreateJsonRequest(HttpMethod.Put, url, payload);
+                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.AddReturnRepresentationPreference();
+                return req;
+            },
+            cancellationToken).ConfigureAwait(false);
 
-        req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
-
-        var res = await SendWithAuthRetryAsync(req, cancellationToken);
-
-        if (res.StatusCode == HttpStatusCode.NoContent)
-        {
-            throw new BusinessCentralServerException(
-                "PUT returned 204 NoContent – expected updated entity.",
-                res.StatusCode,
-                req.Method.Method,
-                req.RequestUri!.ToString(),
-                null,
-                null,
-                null);
-        }
-
-        return await DeserializeAsync<T>(
-            res,
-            "Failed to deserialize PUT response.",
-            cancellationToken);
+        return await ReadEntityOrEchoAsync(
+            res, payload, "Failed to deserialize PUT response.", cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task DeleteAsync(
         string path,
         string systemId,
@@ -250,209 +486,327 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
     {
         var url = _urlBuilder.BuildEntityUrl(path, systemId);
 
-        var req = CreateJsonRequest(HttpMethod.Delete, url);
-
-        req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
-
-        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+        using var res = await SendWithAuthRetryAsync(
+            () =>
+            {
+                var req = CreateJsonRequest(HttpMethod.Delete, url);
+                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                return req;
+            },
+            cancellationToken).ConfigureAwait(false);
 
         if (res.StatusCode != HttpStatusCode.NoContent &&
             res.StatusCode != HttpStatusCode.OK)
         {
             throw new BusinessCentralServerException(
-                $"DELETE expected 204 NoContent but got {(int)res.StatusCode}.",
+                $"DELETE expected 200 OK or 204 NoContent but got {(int)res.StatusCode}.",
                 res.StatusCode,
-                req.Method.Method,
-                req.RequestUri!.ToString(),
+                HttpMethod.Delete.Method,
+                url,
                 null,
                 null,
                 null);
         }
     }
 
-    private async Task<T> SendWithRetryAndDeserializeAsync<T>(
-        HttpRequestMessage req,
+    /// <summary>
+    /// Returns the entity Business Central echoed back, or the payload that was sent when
+    /// the server answered 204 NoContent / an empty body. A write that succeeded without a
+    /// representation is still a success — the request asked for one via Prefer, but the
+    /// server is free to decline.
+    /// </summary>
+    private async Task<T> ReadEntityOrEchoAsync<T>(
+        HttpResponseMessage res,
+        T payload,
+        string errorMessage,
         CancellationToken cancellationToken)
         where T : class
     {
-        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+        if (res.StatusCode == HttpStatusCode.NoContent)
+            return payload;
 
-        return await DeserializeAsync<T>(
-            res,
-            "Failed to deserialize Business Central response.",
-            cancellationToken);
+        var json = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(json))
+            return payload;
+
+        return Deserialize<T>(json, res, errorMessage);
     }
 
-    private async Task<HttpResponseMessage> SendWithAuthRetryAsync(
-        HttpRequestMessage originalRequest,
+    /// <summary>
+    /// Response reader for the two-generic write overloads, where the payload cannot stand
+    /// in for the result. A 204 NoContent or empty body yields <see langword="default"/>,
+    /// which is how the caller learns the server applied the write without returning a
+    /// representation.
+    /// </summary>
+    private async Task<TResult?> ReadEntityOrDefaultAsync<TResult>(
+        HttpResponseMessage res,
+        string errorMessage,
         CancellationToken cancellationToken)
     {
-        var requestInfo = new BusinessCentralRequestInfo
-        {
-            Method = originalRequest.Method.Method,
-            Url = originalRequest.RequestUri!.ToString()
-        };
+        if (res.StatusCode == HttpStatusCode.NoContent)
+            return default;
 
-        _observer.OnRequestStarting(requestInfo);
+        var json = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(json))
+            return default;
+
+        return Deserialize<TResult>(json, res, errorMessage);
+    }
+
+    /// <summary>
+    /// Sends a request, refreshing the token once on <c>401</c> and replaying transient
+    /// failures according to <see cref="BusinessCentralRetryOptions"/>.
+    /// </summary>
+    /// <param name="createRequest">
+    /// Builds the request. Called once per attempt — <b>not</b> reused — because
+    /// <see cref="HttpClient"/> disposes request content once a send completes, so replaying
+    /// a previously sent instance throws <see cref="ObjectDisposedException"/> for anything
+    /// with a body.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    private async Task<HttpResponseMessage> SendWithAuthRetryAsync(
+        Func<HttpRequestMessage> createRequest,
+        CancellationToken cancellationToken)
+    {
+        var request = createRequest();
+
+        var method = request.Method;
+        var url = request.RequestUri!.ToString();
+
+        _observer.OnRequestStarting(new BusinessCentralRequestInfo
+        {
+            Method = method.Method,
+            Url = url
+        });
+
+        var retry = _options.Retry ?? new BusinessCentralRetryOptions();
+        var maxAttempts = retry.Enabled ? Math.Max(1, retry.MaxAttempts) : 1;
+
+        // Guards against reporting the same failure twice: once at the throw site and
+        // again in the catch-all below.
+        var failureReported = false;
+
+        var authRetried = false;
+        var transientAttempt = 0;
 
         try
         {
-            for (var attempt = 0; attempt < 2; attempt++)
+            while (true)
             {
-                var token = await GetTokenAsync(cancellationToken);
+                var token = await _tokenProvider.GetTokenAsync(cancellationToken).ConfigureAwait(false);
 
-                var req = originalRequest.Clone();
-                req.Headers.Authorization =
-                    new AuthenticationHeaderValue(BearerScheme, token);
+                request.Headers.Authorization = new AuthenticationHeaderValue(BearerScheme, token);
 
-                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                var stopwatch = Stopwatch.StartNew();
 
-                var res = await _http.SendAsync(req, cancellationToken);
-                res.RequestMessage ??= req;
+                var res = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                res.RequestMessage ??= request;
 
                 stopwatch.Stop();
 
-                if (res.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
+                if (res.StatusCode == HttpStatusCode.Unauthorized && !authRetried)
                 {
+                    authRetried = true;
+
                     _observer.OnRequestFailed(new BusinessCentralErrorInfo
                     {
-                        Method = req.Method.Method,
-                        Url = req.RequestUri!.ToString(),
+                        Method = method.Method,
+                        Url = url,
                         Duration = stopwatch.Elapsed,
                         StatusCode = (int)res.StatusCode,
+                        ResponseBody = await ReadBodySafeAsync(res, cancellationToken).ConfigureAwait(false),
                         Exception = new UnauthorizedAccessException("Unauthorized – retrying with refreshed token")
                     });
 
-                    await InvalidateTokenAsync(cancellationToken);
+                    await _tokenProvider.InvalidateAsync(cancellationToken).ConfigureAwait(false);
+
+                    request = Replace(res, request, createRequest);
                     continue;
                 }
 
                 if (!res.IsSuccessStatusCode)
                 {
+                    var failure = await BusinessCentralExceptionFactory
+                        .CreateAsync(res, cancellationToken).ConfigureAwait(false);
+
                     _observer.OnRequestFailed(new BusinessCentralErrorInfo
                     {
-                        Method = req.Method.Method,
-                        Url = req.RequestUri!.ToString(),
+                        Method = method.Method,
+                        Url = url,
                         Duration = stopwatch.Elapsed,
                         StatusCode = (int)res.StatusCode,
-                        Exception = new HttpRequestException($"HTTP {(int)res.StatusCode}")
+                        ResponseBody = failure.ResponseBody,
+                        Exception = failure
                     });
 
-                    throw await BusinessCentralExceptionFactory.CreateAsync(res, cancellationToken);
+                    if (transientAttempt + 1 < maxAttempts &&
+                        IsSafeToReplay(failure, method, retry))
+                    {
+                        transientAttempt++;
+
+                        var fromRetryAfter = retry.HonorRetryAfter && failure.RetryAfter != null;
+                        var delay = ComputeDelay(retry, failure.RetryAfter, transientAttempt);
+
+                        _observer.OnRequestRetrying(new BusinessCentralRetryInfo
+                        {
+                            Method = method.Method,
+                            Url = url,
+                            StatusCode = (int)res.StatusCode,
+                            Attempt = transientAttempt,
+                            Delay = delay,
+                            FromRetryAfter = fromRetryAfter
+                        });
+
+                        // Release the failed attempt before sleeping. Under throttling the
+                        // backoff window is exactly when buffered responses would otherwise
+                        // pile up across concurrent callers.
+                        res.Dispose();
+                        request.Dispose();
+
+                        if (delay > TimeSpan.Zero)
+                            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+
+                        request = createRequest();
+                        continue;
+                    }
+
+                    failureReported = true;
+
+                    res.Dispose();
+                    request.Dispose();
+
+                    throw failure;
                 }
 
                 _observer.OnRequestSucceeded(new BusinessCentralRequestInfo
                 {
-                    Method = req.Method.Method,
-                    Url = req.RequestUri!.ToString(),
+                    Method = method.Method,
+                    Url = url,
                     Duration = stopwatch.Elapsed,
                     StatusCode = (int)res.StatusCode
                 });
 
+                // Ownership of the response passes to the caller, which disposes it.
                 return res;
             }
-
-            throw new InvalidOperationException("Unexpected state in SendWithAuthRetryAsync");
         }
         catch (Exception ex)
         {
-            _observer.OnRequestFailed(new BusinessCentralErrorInfo
+            if (!failureReported)
             {
-                Method = originalRequest.Method.Method,
-                Url = originalRequest.RequestUri!.ToString(),
-                Exception = ex
-            });
+                _observer.OnRequestFailed(new BusinessCentralErrorInfo
+                {
+                    Method = method.Method,
+                    Url = url,
+                    Exception = ex
+                });
+            }
 
             throw;
         }
     }
 
-    private async Task<HttpResponseMessage> SendAsync(
-        string path,
-        string filter,
-        QueryOptions options,
-        IEnumerable<string>? select,
+    /// <summary>
+    /// Releases an abandoned attempt and builds a fresh request for the next one, so retries
+    /// neither leak responses nor re-send content that has already been disposed.
+    /// </summary>
+    private static HttpRequestMessage Replace(
+        HttpResponseMessage response,
+        HttpRequestMessage request,
+        Func<HttpRequestMessage> createRequest)
+    {
+        response.Dispose();
+        request.Dispose();
+
+        return createRequest();
+    }
+
+    /// <summary>
+    /// Whether this failure may be retried by replaying the same request.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A <c>429</c> was rejected before processing, so replaying is always safe regardless
+    /// of method. The other transient statuses are ambiguous — the write may already have
+    /// been applied — so the method decides.
+    /// </para>
+    /// <para>
+    /// <c>GET</c>, <c>PUT</c> and <c>DELETE</c> are idempotent by HTTP semantics and always
+    /// replayed. <c>POST</c> is not, and creates a duplicate record if replayed after a write
+    /// that actually landed, so it is held back unless
+    /// <see cref="BusinessCentralRetryOptions.RetryPostOnTransientFailures"/> is set.
+    /// </para>
+    /// <para>
+    /// <c>PATCH</c> is <b>replayed</b>, which is a deliberate deviation from RFC 9110 — that
+    /// spec does not guarantee PATCH is idempotent. It is safe here because this client only
+    /// ever sends a JSON merge of absolute field values, so applying it twice converges on
+    /// the same state rather than compounding. A <c>PATCH</c> body containing relative
+    /// operations would break that assumption; disable retries or pass a real
+    /// <c>If-Match</c> ETag instead of <c>*</c> if you need one.
+    /// </para>
+    /// </remarks>
+    private static bool IsSafeToReplay(
+        BusinessCentralException failure,
+        HttpMethod method,
+        BusinessCentralRetryOptions retry)
+    {
+        if (!failure.IsTransient)
+            return false;
+
+        if (failure.StatusCode == HttpStatusCode.TooManyRequests)
+            return true;
+
+        if (method == HttpMethod.Post && !retry.RetryPostOnTransientFailures)
+            return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// A server-supplied <c>Retry-After</c> wins over computed backoff; otherwise the delay
+    /// doubles per attempt. Both are capped by <see cref="BusinessCentralRetryOptions.MaxDelay"/>.
+    /// </summary>
+    private static TimeSpan ComputeDelay(
+        BusinessCentralRetryOptions retry,
+        TimeSpan? retryAfter,
+        int attempt)
+    {
+        var max = Floor(retry.MaxDelay);
+
+        if (retry.HonorRetryAfter && retryAfter is { } requested)
+            return Clamp(requested, max);
+
+        var milliseconds = Floor(retry.BaseDelay).TotalMilliseconds * Math.Pow(2, attempt - 1);
+
+        // A large BaseDelay or a high attempt count overflows to a value TimeSpan cannot
+        // represent — or to Infinity — and TimeSpan.FromMilliseconds throws on both. Compare
+        // in double space first so a transient failure never becomes a crash.
+        if (double.IsNaN(milliseconds) || milliseconds >= max.TotalMilliseconds)
+            return max;
+
+        return Clamp(TimeSpan.FromMilliseconds(milliseconds), max);
+    }
+
+    private static TimeSpan Floor(TimeSpan value) =>
+        value < TimeSpan.Zero ? TimeSpan.Zero : value;
+
+    private static TimeSpan Clamp(TimeSpan value, TimeSpan max) =>
+        value < TimeSpan.Zero ? TimeSpan.Zero : value > max ? max : value;
+
+    private static async Task<string?> ReadBodySafeAsync(
+        HttpResponseMessage res,
         CancellationToken cancellationToken)
     {
-        var url = _urlBuilder.BuildQueryUrl(path, filter, options, select);
-
-        var req = CreateJsonRequest(HttpMethod.Get, url);
-
-        return await SendWithAuthRetryAsync(req, cancellationToken);
-    }
-
-    private async Task InvalidateTokenAsync(CancellationToken cancellationToken)
-    {
-        await _tokenLock.WaitAsync(cancellationToken);
-        try { _token = null; }
-        finally { _tokenLock.Release(); }
-    }
-
-    private async Task<string> GetTokenAsync(CancellationToken cancellationToken)
-    {
-        var current = _token;
-        if (current != null && !current.IsExpired)
-        {
-            NotifyTokenRefreshed(current.ExpiresAt, true);
-
-            return current.Token;
-        }
-
-        await _tokenLock.WaitAsync(cancellationToken);
-
         try
         {
-            current = _token;
-            if (current != null && !current.IsExpired)
-            {
-                NotifyTokenRefreshed(current.ExpiresAt, true);
-
-                return current.Token;
-            }
-
-            var endpoint = _options.TokenEndpoint.Replace("{TenantId}", _options.TenantId);
-
-            var form = new Dictionary<string, string>
-            {
-                ["client_id"] = _options.ClientId,
-                ["client_secret"] = _options.ClientSecret,
-                ["scope"] = _options.Scope,
-                ["grant_type"] = "client_credentials"
-            };
-
-            var body = new FormUrlEncodedContent(form);
-
-            _observer.OnTokenRequested();
-
-            var req = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = body };
-            req.AddJsonHeaders();
-
-            var res = await _http.SendAsync(req, cancellationToken);
-            res.RequestMessage ??= req;
-
-            if (!res.IsSuccessStatusCode)
-                throw await BusinessCentralExceptionFactory.CreateAsync(res, cancellationToken);
-
-            var json = await res.Content.ReadAsStringAsync(cancellationToken);
-
-            var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(json, _jsonOptions)
-                                ?? throw new JsonException("Token response was null.");
-
-            var expiresAt = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn - 60);
-
-            _token = new CachedAccessToken
-            {
-                Token = tokenResponse.AccessToken,
-                ExpiresAt = expiresAt
-            };
-
-            NotifyTokenRefreshed(expiresAt, false);
-
-            return _token.Token;
+            return await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         }
-        finally
+        catch
         {
-            _tokenLock.Release();
+            // Diagnostics must never mask the original failure.
+            return null;
         }
     }
 
@@ -461,8 +815,13 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         string errorMessage,
         CancellationToken cancellationToken)
     {
-        var json = await res.Content.ReadAsStringAsync(cancellationToken);
+        var json = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
+        return Deserialize<T>(json, res, errorMessage);
+    }
+
+    private T Deserialize<T>(string json, HttpResponseMessage res, string errorMessage)
+    {
         try
         {
             return JsonSerializer.Deserialize<T>(json, _jsonOptions)
@@ -475,6 +834,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
                 Method = res.RequestMessage!.Method.Method,
                 Url = res.RequestMessage!.RequestUri!.ToString(),
                 StatusCode = (int)res.StatusCode,
+                ResponseBody = json,
                 Exception = ex
             });
 
@@ -488,36 +848,5 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
                 null,
                 ex);
         }
-    }
-
-    private void NotifyTokenRefreshed(DateTime expiresAt, bool fromCache)
-    {
-        _observer.OnTokenRefreshed(new BusinessCentralTokenInfo
-        {
-            ExpiresAt = expiresAt,
-            FromCache = fromCache
-        });
-    }
-
-    private sealed class ODataWrapper<T>
-    {
-        [JsonPropertyName("value")]
-        public List<T> Value { get; set; } = [];
-    }
-
-    private sealed class TokenResponse
-    {
-        [JsonPropertyName("access_token")]
-        public string AccessToken { get; set; } = string.Empty;
-
-        [JsonPropertyName("expires_in")]
-        public int ExpiresIn { get; set; }
-    }
-
-    private sealed class CachedAccessToken
-    {
-        public string Token { get; set; } = string.Empty;
-        public DateTime ExpiresAt { get; set; }
-        public bool IsExpired => DateTime.UtcNow >= ExpiresAt;
     }
 }
