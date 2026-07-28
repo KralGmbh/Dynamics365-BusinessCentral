@@ -78,6 +78,7 @@ always safe; the others are ambiguous, so a `POST` is *not* retried on them:
 | Method | `429` | `408`/`502`/`503`/`504` |
 | --- | --- | --- |
 | `GET`, `PUT`, `DELETE` | retried | retried |
+| `PATCH` | retried | retried — this client sends absolute values, so replay converges |
 | `POST` | retried | **not** retried |
 
 If you already have an outer retry policy (Polly, Wolverine, a message broker), the two now

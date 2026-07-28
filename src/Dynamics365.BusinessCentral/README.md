@@ -253,7 +253,13 @@ already have been applied — so:
 | Method | `429` | `408` / `502` / `503` / `504` |
 | ------ | ----- | ----------------------------- |
 | `GET`, `PUT`, `DELETE` | retried | retried (idempotent — replay converges) |
+| `PATCH` | retried | retried (see below) |
 | `POST` | retried | **not** retried; the exception is raised |
+
+`PATCH` is replayed too. RFC 9110 does not guarantee PATCH is idempotent, but this client
+only ever sends a JSON merge of absolute field values, so applying it twice converges on the
+same state. If your payload carries relative operations, disable retries or pass a real
+`If-Match` ETag instead of `*`.
 
 Without this, a `504` on a `POST` could duplicate a record that Business Central had already
 created. If your endpoint deduplicates server-side, or duplicates are acceptable, opt back

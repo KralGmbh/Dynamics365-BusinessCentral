@@ -312,6 +312,28 @@ public class RetryTests
 
     #endregion
 
+    // PATCH is deliberately replayed even though RFC 9110 does not guarantee it is
+    // idempotent: this client only sends absolute field values, so a replay converges.
+    // Pinned because it is a behavioural contract, documented in the README retry table.
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    public async Task Patch_Is_Replayed_On_Ambiguous_Transient_Failures(HttpStatusCode status)
+    {
+        var patches = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+        {
+            patches++;
+            return new HttpResponseMessage(status) { Content = new StringContent("x") };
+        }));
+
+        await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.PatchAsync("prodOrders", "id-1", new TestPatchEntity()));
+
+        Assert.Equal(3, patches);
+    }
+
     #region Backoff bounds
 
     // A large BaseDelay with a high attempt count overflows TimeSpan, and
@@ -360,6 +382,73 @@ public class RetryTests
             client.QueryAsync<TestEntity>("orders", "true"));
 
         Assert.All(observer.Retries, r => Assert.True(r.Delay >= TimeSpan.Zero));
+    }
+
+    #endregion
+
+    #region Resource release
+
+    /// <summary>Records when its content is disposed, relative to a stopwatch.</summary>
+    private sealed class TrackingContent : StringContent
+    {
+        private readonly Action _onDispose;
+
+        public TrackingContent(string content, Action onDispose) : base(content)
+            => _onDispose = onDispose;
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+                _onDispose();
+
+            base.Dispose(disposing);
+        }
+    }
+
+    // The failed response must be released before the backoff sleep, not after: under
+    // throttling the sleep is exactly when buffered responses would pile up.
+    [Fact]
+    public async Task Failed_Response_Is_Released_Before_The_Backoff_Sleep()
+    {
+        var backoff = TimeSpan.FromMilliseconds(600);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        long? disposedAtMs = null;
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(
+            TestBase.WithToken(_ =>
+            {
+                dataCalls++;
+
+                if (dataCalls > 1)
+                    return TestBase.Json("{\"value\":[]}");
+
+                return new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+                {
+                    Content = new TrackingContent(
+                        "slow down",
+                        () => disposedAtMs ??= clock.ElapsedMilliseconds)
+                };
+            }),
+            configure: o => o.Retry = new BusinessCentralRetryOptions
+            {
+                MaxAttempts = 2,
+                BaseDelay = backoff,
+                MaxDelay = backoff,
+                HonorRetryAfter = false
+            });
+
+        await client.QueryAsync<TestEntity>("orders", "true");
+
+        Assert.Equal(2, dataCalls);
+        Assert.NotNull(disposedAtMs);
+
+        // Disposed near the start of the window rather than after it elapsed. Generous
+        // margin so this does not turn flaky on a loaded CI box.
+        Assert.True(
+            disposedAtMs < backoff.TotalMilliseconds * 0.75,
+            $"response was released after {disposedAtMs}ms, expected before the {backoff.TotalMilliseconds}ms sleep");
     }
 
     #endregion

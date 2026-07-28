@@ -63,6 +63,8 @@ are silent.
   `TResponse` was constrained to reference types, so the documented example never built for
   consumers. The constraint is removed, matching the unconstrained result type on the
   two-generic write overloads.
+- **Failed responses are released before the backoff sleep** rather than after, so a
+  throttling window no longer holds buffered responses open across concurrent callers.
 - **Retry backoff cannot overflow.** A large `BaseDelay` combined with a high `MaxAttempts`
   produced a value `TimeSpan` cannot represent, and `TimeSpan.FromMilliseconds` throws on
   that — turning a transient failure into an unrelated crash. Delays are now clamped, and
@@ -112,8 +114,9 @@ are silent.
   entity where it can.
 - **`POST` is not replayed on ambiguous transient failures.** A `429` is rejected before
   processing so replay is safe, but `408`/`502`/`503`/`504` may mean the write landed —
-  replaying would duplicate it. `GET`/`PUT`/`DELETE` are retried normally. Opt back in with
-  `Retry.RetryPostOnTransientFailures`.
+  replaying would duplicate it. `GET`/`PUT`/`DELETE` are retried normally, and `PATCH` is
+  too, because this client only sends absolute field values so a replay converges. Opt
+  `POST` back in with `Retry.RetryPostOnTransientFailures`.
 - **Options validation names each missing setting** instead of collapsing everything into
   one boolean, and rejects unsubstituted `{…}` placeholders.
 - `ConfigureAwait(false)` throughout, so sync-over-async callers cannot deadlock.

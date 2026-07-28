@@ -52,6 +52,12 @@ public sealed class BusinessCentralRetryOptions
     /// Set this to <see langword="true"/> only when the endpoint you POST to deduplicates
     /// server-side, or when duplicates are acceptable.
     /// </para>
+    /// <para>
+    /// This setting covers <c>POST</c> only. <c>PATCH</c> is always replayed, because this
+    /// client sends a JSON merge of absolute field values, which converges when applied
+    /// twice. Disable retries entirely, or pass a real <c>If-Match</c> ETag, if you need a
+    /// <c>PATCH</c> held back.
+    /// </para>
     /// </remarks>
     public bool RetryPostOnTransientFailures { get; set; }
 }

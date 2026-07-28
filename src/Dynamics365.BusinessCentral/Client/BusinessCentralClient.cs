@@ -659,10 +659,16 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
                             FromRetryAfter = fromRetryAfter
                         });
 
+                        // Release the failed attempt before sleeping. Under throttling the
+                        // backoff window is exactly when buffered responses would otherwise
+                        // pile up across concurrent callers.
+                        res.Dispose();
+                        request.Dispose();
+
                         if (delay > TimeSpan.Zero)
                             await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
 
-                        request = Replace(res, request, createRequest);
+                        request = createRequest();
                         continue;
                     }
 
@@ -721,10 +727,25 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     /// Whether this failure may be retried by replaying the same request.
     /// </summary>
     /// <remarks>
-    /// A <c>429</c> was rejected before processing, so replaying is always safe. The other
-    /// transient statuses are ambiguous — the write may already have been applied — so a
-    /// non-idempotent <c>POST</c> is not replayed unless the caller opts in. Idempotent
-    /// methods converge on the same state and are always retried.
+    /// <para>
+    /// A <c>429</c> was rejected before processing, so replaying is always safe regardless
+    /// of method. The other transient statuses are ambiguous — the write may already have
+    /// been applied — so the method decides.
+    /// </para>
+    /// <para>
+    /// <c>GET</c>, <c>PUT</c> and <c>DELETE</c> are idempotent by HTTP semantics and always
+    /// replayed. <c>POST</c> is not, and creates a duplicate record if replayed after a write
+    /// that actually landed, so it is held back unless
+    /// <see cref="BusinessCentralRetryOptions.RetryPostOnTransientFailures"/> is set.
+    /// </para>
+    /// <para>
+    /// <c>PATCH</c> is <b>replayed</b>, which is a deliberate deviation from RFC 9110 — that
+    /// spec does not guarantee PATCH is idempotent. It is safe here because this client only
+    /// ever sends a JSON merge of absolute field values, so applying it twice converges on
+    /// the same state rather than compounding. A <c>PATCH</c> body containing relative
+    /// operations would break that assumption; disable retries or pass a real
+    /// <c>If-Match</c> ETag instead of <c>*</c> if you need one.
+    /// </para>
     /// </remarks>
     private static bool IsSafeToReplay(
         BusinessCentralException failure,
