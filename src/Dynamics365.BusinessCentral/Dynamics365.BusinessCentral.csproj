@@ -7,7 +7,7 @@
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>2.0.0</Version>
+        <Version>2.0.0-alpha</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
 
@@ -35,6 +35,9 @@
         <!-- Shown on the nuget.org package page. Kept short and pointed at CHANGELOG.md
              rather than duplicated, since nuget.org renders this as plain text. -->
         <PackageReleaseNotes>
+            PRERELEASE — 2.0.0-alpha is published for validation against real Business
+            Central environments. Not recommended for production until 2.0.0 stable.
+
             2.0.0 fixes six defects and reworks the API: typed queries via client.Query&lt;T&gt;(),
             Retry-After aware throttling handling, streaming, $expand/$count, multi-company
             support, and XML docs now shipped in the package.

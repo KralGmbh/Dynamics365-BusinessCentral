@@ -7,7 +7,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [2.0.0] - 2026-07-28
+## [2.0.0-alpha] - 2026-07-28
+
+**Prerelease.** Published for validation against real Business Central environments before
+2.0.0 stable. Everything below is complete and tested, but every test runs against a fake
+HTTP handler — see *Unverified* at the end of this entry for what still needs confirming
+against a live tenant.
+
+Install with `dotnet add package Dynamics365.BusinessCentral --prerelease`, or pin the
+version explicitly.
 
 Six defects and a rework of the consumer-facing API. **Upgrading from 1.x? Start with
 [MIGRATION.md](MIGRATION.md)** — most code keeps compiling, but several behavioural changes
@@ -108,6 +116,17 @@ are silent.
 - No Native AOT or trimming support yet; `System.Text.Json` reflection and the reflection
   used for typed selectors both block it.
 
+### Unverified
+
+Known gaps in this prerelease, to be confirmed before 2.0.0 stable:
+
+- `GetCompaniesAsync` targets `{BaseUrl}/Company`. `BusinessCentralCompany.Name` is
+  reliable; `DisplayName`, `Id` and `IsEvaluationCompany` are best-effort and null when the
+  endpoint does not return them. Not checked against a live tenant.
+- Whether Business Central honours `Prefer: return=representation` on a given endpoint,
+  which determines how often the `204 No Content` path is taken on writes.
+- Paging against a real dataset large enough to trigger server-driven `@odata.nextLink`.
+
 ## [1.0.0] - 2026-01-20
 
 First stable release.
@@ -130,6 +149,6 @@ First stable release.
 Initial pre-release line: OData querying with fluent filters, client-credentials
 authentication, DI integration, multi-targeting and NuGet packaging.
 
-[Unreleased]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0...HEAD
-[2.0.0]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v1.0.0...v2.0.0
+[Unreleased]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-alpha...HEAD
+[2.0.0-alpha]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v1.0.0...v2.0.0-alpha
 [1.0.0]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v0.1.10...v1.0.0
