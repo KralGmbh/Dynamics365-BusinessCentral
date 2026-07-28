@@ -1,18 +1,58 @@
-﻿using System.Net;
+using System.Net;
 using System.Text;
 using System.Text.Json.Serialization;
 
 namespace Dynamics365.BusinessCentral.Errors;
 
+/// <summary>
+/// Base type for every error surfaced by the Business Central client.
+/// </summary>
+/// <remarks>
+/// <see cref="Exception.Message"/> is deliberately a single line so it stays usable as a
+/// log message. The response body, request URL, OData error code and correlation ID are
+/// available as properties, and <see cref="ToString"/> renders all of them.
+/// </remarks>
 public abstract class BusinessCentralException : Exception
 {
+    /// <summary>HTTP status code returned by Business Central.</summary>
     public HttpStatusCode StatusCode { get; }
+
+    /// <summary>HTTP method of the failed request.</summary>
     public string Method { get; }
+
+    /// <summary>URL of the failed request.</summary>
     public string? RequestUrl { get; }
+
+    /// <summary>Raw response body, when one was returned.</summary>
     public string? ResponseBody { get; }
+
+    /// <summary>OData error code, e.g. <c>BadRequest_ResourceNotFound</c>.</summary>
     public string? ODataErrorCode { get; }
+
+    /// <summary>Business Central correlation ID, useful when raising a support ticket.</summary>
     public string? CorrelationId { get; }
 
+    /// <summary>
+    /// Delay requested by the server via <c>Retry-After</c>, when present.
+    /// </summary>
+    public TimeSpan? RetryAfter { get; internal set; }
+
+    /// <summary>
+    /// Whether retrying the same request could plausibly succeed. <see langword="true"/> for
+    /// throttling and transient server failures, <see langword="false"/> for validation,
+    /// authentication and not-found errors.
+    /// </summary>
+    public virtual bool IsTransient => false;
+
+    /// <summary>Creates a new <see cref="BusinessCentralException"/>.</summary>
+    /// <param name="message">Short, single-line description of the failure.</param>
+    /// <param name="statusCode">HTTP status code returned by Business Central.</param>
+    /// <param name="method">HTTP method of the failed request.</param>
+    /// <param name="requestUrl">URL of the failed request.</param>
+    /// <param name="responseBody">Raw response body, when one was returned.</param>
+    /// <param name="odataErrorCode">OData error code parsed from the response.</param>
+    /// <param name="correlationId">Business Central correlation ID.</param>
+    /// <param name="inner">Underlying exception, when this wraps one.</param>
     protected BusinessCentralException(
         string message,
         HttpStatusCode statusCode,
@@ -22,7 +62,7 @@ public abstract class BusinessCentralException : Exception
         string? odataErrorCode = null,
         string? correlationId = null,
         Exception? inner = null)
-        : base(BuildMessage(message, statusCode, method, requestUrl, responseBody, odataErrorCode, correlationId), inner)
+        : base(BuildSummary(message, statusCode, method), inner)
     {
         StatusCode = statusCode;
         Method = method;
@@ -32,42 +72,56 @@ public abstract class BusinessCentralException : Exception
         CorrelationId = correlationId;
     }
 
-    private static string BuildMessage(
-        string message,
-        HttpStatusCode status,
-        string method,
-        string? url,
-        string? body,
-        string? odataErrorCode,
-        string? correlationId)
+    /// <summary>
+    /// One line: the server's message plus method and status. Everything else lives on
+    /// properties so structured logs are not flooded with response bodies.
+    /// </summary>
+    private static string BuildSummary(string message, HttpStatusCode status, string method)
     {
-        var sb = new StringBuilder();
+        var trimmed = string.IsNullOrWhiteSpace(message)
+            ? $"Business Central request failed."
+            : message.Trim().ReplaceLineEndings(" ");
 
-        sb.AppendLine(message);
-        sb.AppendLine($"Status: {(int)status} {status}");
-        sb.AppendLine($"Method: {method}");
-        sb.AppendLine($"URL: {url}");
+        return $"{trimmed} ({method} → HTTP {(int)status} {status})";
+    }
 
-        if (!string.IsNullOrWhiteSpace(odataErrorCode))
-            sb.AppendLine($"OData Code: {odataErrorCode}");
+    /// <summary>
+    /// Renders the full diagnostic picture: message, stack trace, request URL, OData code,
+    /// correlation ID and response body.
+    /// </summary>
+    public override string ToString()
+    {
+        var sb = new StringBuilder(base.ToString());
 
-        if (!string.IsNullOrWhiteSpace(correlationId))
-            sb.AppendLine($"CorrelationId: {correlationId}");
+        sb.AppendLine();
+        sb.AppendLine("--- Business Central details ---");
+        sb.AppendLine($"Status: {(int)StatusCode} {StatusCode}");
+        sb.AppendLine($"Method: {Method}");
+        sb.AppendLine($"URL: {RequestUrl}");
 
-        if (!string.IsNullOrWhiteSpace(body))
+        if (!string.IsNullOrWhiteSpace(ODataErrorCode))
+            sb.AppendLine($"OData Code: {ODataErrorCode}");
+
+        if (!string.IsNullOrWhiteSpace(CorrelationId))
+            sb.AppendLine($"CorrelationId: {CorrelationId}");
+
+        if (RetryAfter != null)
+            sb.AppendLine($"Retry-After: {RetryAfter}");
+
+        if (!string.IsNullOrWhiteSpace(ResponseBody))
         {
             sb.AppendLine("Response:");
-            sb.AppendLine(body);
+            sb.AppendLine(ResponseBody);
         }
 
         return sb.ToString();
     }
-
-    public override string ToString() => Message;
 }
 
+/// <summary>The requested entity or entity set does not exist (<c>404</c>).</summary>
 public sealed class BusinessCentralNotFoundException : BusinessCentralException
 {
+    /// <inheritdoc cref="BusinessCentralException(string, HttpStatusCode, string, string?, string?, string?, string?, Exception?)"/>
     public BusinessCentralNotFoundException(
         string message,
         HttpStatusCode code,
@@ -80,8 +134,10 @@ public sealed class BusinessCentralNotFoundException : BusinessCentralException
         : base(message, code, method, url, body, odataErrorCode, correlationId, inner) { }
 }
 
+/// <summary>Authentication or authorisation failed (<c>401</c> / <c>403</c>).</summary>
 public sealed class BusinessCentralAuthException : BusinessCentralException
 {
+    /// <inheritdoc cref="BusinessCentralException(string, HttpStatusCode, string, string?, string?, string?, string?, Exception?)"/>
     public BusinessCentralAuthException(
         string message,
         HttpStatusCode code,
@@ -94,8 +150,10 @@ public sealed class BusinessCentralAuthException : BusinessCentralException
         : base(message, code, method, url, body, odataErrorCode, correlationId, inner) { }
 }
 
+/// <summary>Business Central rejected the request as invalid (<c>400</c>).</summary>
 public sealed class BusinessCentralValidationException : BusinessCentralException
 {
+    /// <inheritdoc cref="BusinessCentralException(string, HttpStatusCode, string, string?, string?, string?, string?, Exception?)"/>
     public BusinessCentralValidationException(
         string message,
         HttpStatusCode code,
@@ -108,8 +166,36 @@ public sealed class BusinessCentralValidationException : BusinessCentralExceptio
         : base(message, code, method, url, body, odataErrorCode, correlationId, inner) { }
 }
 
+/// <summary>
+/// The request was throttled (<c>429</c>). Always transient; inspect
+/// <see cref="BusinessCentralException.RetryAfter"/> for the server's requested delay.
+/// </summary>
+public sealed class BusinessCentralThrottledException : BusinessCentralException
+{
+    /// <inheritdoc cref="BusinessCentralException(string, HttpStatusCode, string, string?, string?, string?, string?, Exception?)"/>
+    public BusinessCentralThrottledException(
+        string message,
+        HttpStatusCode code,
+        string method,
+        string? url,
+        string? body,
+        string? odataErrorCode = null,
+        string? correlationId = null,
+        Exception? inner = null)
+        : base(message, code, method, url, body, odataErrorCode, correlationId, inner) { }
+
+    /// <inheritdoc />
+    public override bool IsTransient => true;
+}
+
+/// <summary>
+/// Business Central returned a server-side failure, or a response that could not be
+/// deserialized. <see cref="BusinessCentralException.IsTransient"/> is <see langword="true"/>
+/// for <c>408</c>, <c>502</c>, <c>503</c> and <c>504</c>.
+/// </summary>
 public sealed class BusinessCentralServerException : BusinessCentralException
 {
+    /// <inheritdoc cref="BusinessCentralException(string, HttpStatusCode, string, string?, string?, string?, string?, Exception?)"/>
     public BusinessCentralServerException(
         string message,
         HttpStatusCode code,
@@ -120,6 +206,13 @@ public sealed class BusinessCentralServerException : BusinessCentralException
         string? correlationId = null,
         Exception? inner = null)
         : base(message, code, method, url, body, odataErrorCode, correlationId, inner) { }
+
+    /// <inheritdoc />
+    public override bool IsTransient => StatusCode is
+        HttpStatusCode.RequestTimeout or
+        HttpStatusCode.BadGateway or
+        HttpStatusCode.ServiceUnavailable or
+        HttpStatusCode.GatewayTimeout;
 }
 
 internal sealed class BusinessCentralODataError
