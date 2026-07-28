@@ -1665,10 +1665,45 @@ public partial class ClientTests
         var ex = await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
             client.QueryAsync<TestEntity>("orders", "true"));
 
-        // Assert
+        // Assert — Message stays a single line; the structured detail lives on properties.
         Assert.Contains("Resource not found", ex.Message);
-        Assert.Contains("BadRequest_ResourceNotFound", ex.Message);
-        Assert.Contains("953b8867-cd45-4516-becf-e22d63f7f98c", ex.Message);
+        Assert.DoesNotContain(System.Environment.NewLine, ex.Message);
+
+        Assert.Equal("BadRequest_ResourceNotFound", ex.ODataErrorCode);
+        Assert.Equal("953b8867-cd45-4516-becf-e22d63f7f98c", ex.CorrelationId);
+
+        // ToString() is where everything shows up.
+        var detailed = ex.ToString();
+        Assert.Contains("BadRequest_ResourceNotFound", detailed);
+        Assert.Contains("953b8867-cd45-4516-becf-e22d63f7f98c", detailed);
+        Assert.Contains(bcError.Trim(), detailed);
+    }
+
+    [Fact]
+    public async Task Exception_Message_Stays_A_Single_Line()
+    {
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+
+            return new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent(new string('x', 5000))
+            };
+        });
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.QueryAsync<TestEntity>("orders", "true"));
+
+        // A 5 KB body must not end up in the log line.
+        Assert.DoesNotContain("xxxx", ex.Message);
+        Assert.Contains("GET", ex.Message);
+        Assert.Contains("500", ex.Message);
+        Assert.Contains("xxxx", ex.ResponseBody);
     }
 
     [Fact]

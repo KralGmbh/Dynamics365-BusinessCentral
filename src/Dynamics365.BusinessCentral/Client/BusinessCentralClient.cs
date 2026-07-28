@@ -6,25 +6,34 @@ using Microsoft.Extensions.Options;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace Dynamics365.BusinessCentral.Client;
 
-public sealed class BusinessCentralClient : IBusinessCentralClient
+/// <summary>
+/// Default <see cref="IBusinessCentralClient"/> implementation.
+/// </summary>
+public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCentralQueryExecutor
 {
     private readonly HttpClient _http;
+    private readonly BusinessCentralOptions _options;
     private readonly BusinessCentralUrlBuilder _urlBuilder;
     private readonly BusinessCentralTokenProvider _tokenProvider;
     private readonly IBusinessCentralObserver _observer;
+    private readonly string _company;
 
     private const string BearerScheme = "Bearer";
 
-    /// <summary>Default page size used by <see cref="QueryAllAsync{TEntity}"/>.</summary>
+    /// <summary>Default page size used when auto-paging.</summary>
     private const int DefaultPageSize = 1000;
 
     private static readonly JsonSerializerOptions _jsonOptions = BusinessCentralJson.Options;
 
+    /// <summary>Creates a client for the company configured in <paramref name="options"/>.</summary>
+    /// <param name="http">HTTP client used for data requests.</param>
+    /// <param name="options">Connection settings.</param>
+    /// <param name="observer">Optional diagnostics observer.</param>
     public BusinessCentralClient(
         HttpClient http,
         IOptions<BusinessCentralOptions> options,
@@ -40,22 +49,77 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         IBusinessCentralObserver? observer)
     {
         _http = http;
-
-        var resolvedOptions = options.Value;
-
+        _options = options.Value;
         _observer = observer ?? new NullBusinessCentralObserver();
+        _company = _options.Company;
 
-        // No mutation of the supplied HttpClient: it may be pooled or shared, and
-        // setting Timeout/DefaultRequestHeaders after first use throws. Per-request
-        // headers are applied in HttpRequestExtensions.AddJsonHeaders instead.
+        // No mutation of the supplied HttpClient: it may be pooled or shared, and setting
+        // Timeout/DefaultRequestHeaders after first use throws. Per-request headers are
+        // applied in HttpRequestExtensions.AddJsonHeaders instead.
         _tokenProvider = tokenProvider ?? new BusinessCentralTokenProvider(http, options, _observer);
 
-        _urlBuilder = new BusinessCentralUrlBuilder(
-            resolvedOptions.BaseUrl,
-            resolvedOptions.Company);
+        _urlBuilder = new BusinessCentralUrlBuilder(_options.ResolvedBaseUrl, _company);
     }
 
+    /// <summary>Copy constructor used by <see cref="ForCompany"/>.</summary>
+    private BusinessCentralClient(BusinessCentralClient source, string company)
+    {
+        _http = source._http;
+        _options = source._options;
+        _observer = source._observer;
+        _tokenProvider = source._tokenProvider;
+        _company = company;
 
+        _urlBuilder = new BusinessCentralUrlBuilder(source._options.ResolvedBaseUrl, company);
+    }
+
+    /// <inheritdoc />
+    public string Company => _company;
+
+    /// <inheritdoc />
+    public IBusinessCentralClient ForCompany(string company)
+    {
+        if (string.IsNullOrWhiteSpace(company))
+            throw new ArgumentException("Company must not be empty.", nameof(company));
+
+        return string.Equals(company, _company, StringComparison.Ordinal)
+            ? this
+            : new BusinessCentralClient(this, company);
+    }
+
+    /// <inheritdoc />
+    public IBusinessCentralQuery<TEntity> Query<TEntity>() =>
+        new BusinessCentralQuery<TEntity>(this, EntityPath.For<TEntity>());
+
+    /// <inheritdoc />
+    public IBusinessCentralQuery<TEntity> Query<TEntity>(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            throw new ArgumentException("Path must not be empty.", nameof(path));
+
+        return new BusinessCentralQuery<TEntity>(this, path);
+    }
+
+    /// <inheritdoc />
+    public async Task<List<BusinessCentralCompany>> GetCompaniesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        // The company list lives at the service root, not under Company('...').
+        var url = _urlBuilder.BuildServiceRootUrl("Company");
+
+        var req = CreateJsonRequest(HttpMethod.Get, url);
+
+        var res = await SendWithAuthRetryAsync(req, cancellationToken).ConfigureAwait(false);
+
+        var wrapper = await DeserializeAsync<ODataResponse<BusinessCentralCompany>>(
+            res,
+            "Failed to deserialize the Business Central company list.",
+            cancellationToken).ConfigureAwait(false);
+
+        return wrapper.Value;
+    }
+
+    /// <inheritdoc />
     public Task<List<TEntity>> QueryAsync<TEntity>(
         string path,
         ODataFilter? filter = null,
@@ -64,6 +128,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         CancellationToken cancellationToken = default)
         => QueryAsync<TEntity>(path, filter?.Value ?? string.Empty, options, select, cancellationToken);
 
+    /// <inheritdoc />
     public async Task<List<TEntity>> QueryAsync<TEntity>(
         string path,
         string filter,
@@ -74,11 +139,13 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         var queryOptions = new QueryOptions();
         options?.Invoke(queryOptions);
 
-        var page = await QueryPageAsync<TEntity>(path, filter, queryOptions, select, cancellationToken);
+        var page = await FetchPageAsync<TEntity>(path, filter, queryOptions, select, cancellationToken)
+            .ConfigureAwait(false);
 
         return page.Value;
     }
 
+    /// <inheritdoc />
     public async Task<TResponse> QueryRawAsync<TResponse>(
         string path,
         CancellationToken cancellationToken = default)
@@ -90,14 +157,15 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
 
         var req = CreateJsonRequest(HttpMethod.Get, url);
 
-        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+        var res = await SendWithAuthRetryAsync(req, cancellationToken).ConfigureAwait(false);
 
         return await DeserializeAsync<TResponse>(
             res,
             "Failed to deserialize Business Central response.",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task<List<TEntity>> QueryAllAsync<TEntity>(
         string path,
         ODataFilter? filter = null,
@@ -107,54 +175,107 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
     {
         var all = new List<TEntity>();
 
-        var baseOptions = new QueryOptions();
-        options?.Invoke(baseOptions);
-
-        var pageSize = baseOptions.Top ?? DefaultPageSize;
-        var filterValue = filter?.Value ?? string.Empty;
-        var skip = 0;
-
-        var page = await QueryPageAsync<TEntity>(
-            path, filterValue, BuildPageOptions(baseOptions, pageSize, skip), select, cancellationToken);
-
-        while (true)
+        await foreach (var entity in QueryStreamAsync<TEntity>(path, filter, options, select, cancellationToken)
+                           .ConfigureAwait(false))
         {
-            all.AddRange(page.Value);
-
-            // Server-driven paging wins: when Business Central returns @odata.nextLink
-            // it decides the page size, so a short page is not the end of the collection.
-            if (!string.IsNullOrWhiteSpace(page.NextLink))
-            {
-                page = await QueryNextPageAsync<TEntity>(page.NextLink!, cancellationToken);
-                continue;
-            }
-
-            // No nextLink and a short page means the collection is exhausted.
-            if (page.Value.Count < pageSize)
-                break;
-
-            skip += page.Value.Count;
-
-            page = await QueryPageAsync<TEntity>(
-                path, filterValue, BuildPageOptions(baseOptions, pageSize, skip), select, cancellationToken);
+            all.Add(entity);
         }
 
         return all;
     }
 
-    private static QueryOptions BuildPageOptions(QueryOptions baseOptions, int pageSize, int skip)
+    /// <inheritdoc />
+    public async IAsyncEnumerable<TEntity> QueryStreamAsync<TEntity>(
+        string path,
+        ODataFilter? filter = null,
+        Action<QueryOptions>? options = null,
+        IEnumerable<string>? select = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var options = new QueryOptions()
-            .WithTop(pageSize)
-            .WithSkip(skip);
+        var baseOptions = new QueryOptions();
+        options?.Invoke(baseOptions);
+
+        // Top has historically doubled as the page size here; PageSize now says it plainly
+        // and wins when both are set.
+        var pageSize = baseOptions.PageSize ?? baseOptions.Top ?? DefaultPageSize;
+        var filterValue = filter?.Value ?? string.Empty;
+        var skip = 0;
+
+        var page = await FetchPageAsync<TEntity>(
+                path, filterValue, PageOptions(baseOptions, pageSize, skip), select, cancellationToken)
+            .ConfigureAwait(false);
+
+        var serverDriven = false;
+
+        while (true)
+        {
+            var inPage = 0;
+
+            foreach (var entity in page.Value)
+            {
+                yield return entity;
+                inPage++;
+            }
+
+            // Server-driven paging wins: when Business Central sends @odata.nextLink it
+            // decides the page size, so a short page is not the end of the collection.
+            if (!string.IsNullOrWhiteSpace(page.NextLink))
+            {
+                serverDriven = true;
+
+                page = await FetchNextPageAsync<TEntity>(page.NextLink!, cancellationToken)
+                    .ConfigureAwait(false);
+
+                continue;
+            }
+
+            if (serverDriven)
+                yield break;
+
+            // No nextLink and a short page means the collection is exhausted.
+            if (inPage < pageSize)
+                yield break;
+
+            skip += inPage;
+
+            page = await FetchPageAsync<TEntity>(
+                    path, filterValue, PageOptions(baseOptions, pageSize, skip), select, cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static QueryOptions PageOptions(QueryOptions baseOptions, int pageSize, int skip)
+    {
+        var options = new QueryOptions
+        {
+            Top = pageSize,
+            Skip = skip,
+            IncludeCount = baseOptions.IncludeCount
+        };
 
         if (baseOptions.OrderBy != null)
             options.OrderBy = baseOptions.OrderBy;
 
+        if (baseOptions.Expand.Count > 0)
+            options.WithExpand([.. baseOptions.Expand]);
+
         return options;
     }
 
-    private async Task<ODataWrapper<TEntity>> QueryPageAsync<TEntity>(
+    async Task<ODataResponse<TEntity>> IBusinessCentralQueryExecutor.FetchPageAsync<TEntity>(
+        string path,
+        string filter,
+        QueryOptions options,
+        IEnumerable<string>? select,
+        CancellationToken cancellationToken)
+        => await FetchPageAsync<TEntity>(path, filter, options, select, cancellationToken).ConfigureAwait(false);
+
+    async Task<ODataResponse<TEntity>> IBusinessCentralQueryExecutor.FetchNextPageAsync<TEntity>(
+        string absoluteUrl,
+        CancellationToken cancellationToken)
+        => await FetchNextPageAsync<TEntity>(absoluteUrl, cancellationToken).ConfigureAwait(false);
+
+    private async Task<ODataResponse<TEntity>> FetchPageAsync<TEntity>(
         string path,
         string filter,
         QueryOptions options,
@@ -165,26 +286,26 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
 
         var req = CreateJsonRequest(HttpMethod.Get, url);
 
-        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+        var res = await SendWithAuthRetryAsync(req, cancellationToken).ConfigureAwait(false);
 
-        return await DeserializeAsync<ODataWrapper<TEntity>>(
+        return await DeserializeAsync<ODataResponse<TEntity>>(
             res,
             "Failed to deserialize Business Central response.",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<ODataWrapper<TEntity>> QueryNextPageAsync<TEntity>(
+    private async Task<ODataResponse<TEntity>> FetchNextPageAsync<TEntity>(
         string absoluteUrl,
         CancellationToken cancellationToken)
     {
         var req = CreateJsonRequest(HttpMethod.Get, absoluteUrl);
 
-        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+        var res = await SendWithAuthRetryAsync(req, cancellationToken).ConfigureAwait(false);
 
-        return await DeserializeAsync<ODataWrapper<TEntity>>(
+        return await DeserializeAsync<ODataResponse<TEntity>>(
             res,
             "Failed to deserialize Business Central response.",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static HttpRequestMessage CreateJsonRequest(HttpMethod method, string url, object? payload = null)
@@ -203,6 +324,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         return req;
     }
 
+    /// <inheritdoc />
     public async Task<T> PatchAsync<T>(
         string path,
         string systemId,
@@ -218,15 +340,13 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
         req.AddReturnRepresentationPreference();
 
-        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+        var res = await SendWithAuthRetryAsync(req, cancellationToken).ConfigureAwait(false);
 
         return await ReadEntityOrEchoAsync(
-            res,
-            payload,
-            "Failed to deserialize PATCH response.",
-            cancellationToken);
+            res, payload, "Failed to deserialize PATCH response.", cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task<T> PostAsync<T>(
         string path,
         T payload,
@@ -239,15 +359,13 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
 
         req.AddReturnRepresentationPreference();
 
-        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+        var res = await SendWithAuthRetryAsync(req, cancellationToken).ConfigureAwait(false);
 
         return await ReadEntityOrEchoAsync(
-            res,
-            payload,
-            "Failed to deserialize POST response.",
-            cancellationToken);
+            res, payload, "Failed to deserialize POST response.", cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task<T> PutAsync<T>(
         string path,
         string systemId,
@@ -263,15 +381,13 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
         req.AddReturnRepresentationPreference();
 
-        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+        var res = await SendWithAuthRetryAsync(req, cancellationToken).ConfigureAwait(false);
 
         return await ReadEntityOrEchoAsync(
-            res,
-            payload,
-            "Failed to deserialize PUT response.",
-            cancellationToken);
+            res, payload, "Failed to deserialize PUT response.", cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task DeleteAsync(
         string path,
         string systemId,
@@ -284,7 +400,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
 
         req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
 
-        var res = await SendWithAuthRetryAsync(req, cancellationToken);
+        var res = await SendWithAuthRetryAsync(req, cancellationToken).ConfigureAwait(false);
 
         if (res.StatusCode != HttpStatusCode.NoContent &&
             res.StatusCode != HttpStatusCode.OK)
@@ -316,7 +432,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         if (res.StatusCode == HttpStatusCode.NoContent)
             return payload;
 
-        var json = await res.Content.ReadAsStringAsync(cancellationToken);
+        var json = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(json))
             return payload;
@@ -328,54 +444,60 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         HttpRequestMessage originalRequest,
         CancellationToken cancellationToken)
     {
-        var requestInfo = new BusinessCentralRequestInfo
+        _observer.OnRequestStarting(new BusinessCentralRequestInfo
         {
             Method = originalRequest.Method.Method,
             Url = originalRequest.RequestUri!.ToString()
-        };
+        });
 
-        _observer.OnRequestStarting(requestInfo);
+        var retry = _options.Retry ?? new BusinessCentralRetryOptions();
+        var maxAttempts = retry.Enabled ? Math.Max(1, retry.MaxAttempts) : 1;
 
         // Guards against reporting the same failure twice: once at the throw site and
         // again in the catch-all below.
         var failureReported = false;
 
+        var authRetried = false;
+        var transientAttempt = 0;
+
         try
         {
-            for (var attempt = 0; attempt < 2; attempt++)
+            while (true)
             {
-                var token = await _tokenProvider.GetTokenAsync(cancellationToken);
+                var token = await _tokenProvider.GetTokenAsync(cancellationToken).ConfigureAwait(false);
 
                 var req = originalRequest.Clone();
-                req.Headers.Authorization =
-                    new AuthenticationHeaderValue(BearerScheme, token);
+                req.Headers.Authorization = new AuthenticationHeaderValue(BearerScheme, token);
 
                 var stopwatch = Stopwatch.StartNew();
 
-                var res = await _http.SendAsync(req, cancellationToken);
+                var res = await _http.SendAsync(req, cancellationToken).ConfigureAwait(false);
                 res.RequestMessage ??= req;
 
                 stopwatch.Stop();
 
-                if (res.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
+                if (res.StatusCode == HttpStatusCode.Unauthorized && !authRetried)
                 {
+                    authRetried = true;
+
                     _observer.OnRequestFailed(new BusinessCentralErrorInfo
                     {
                         Method = req.Method.Method,
                         Url = req.RequestUri!.ToString(),
                         Duration = stopwatch.Elapsed,
                         StatusCode = (int)res.StatusCode,
-                        ResponseBody = await ReadBodySafeAsync(res, cancellationToken),
+                        ResponseBody = await ReadBodySafeAsync(res, cancellationToken).ConfigureAwait(false),
                         Exception = new UnauthorizedAccessException("Unauthorized – retrying with refreshed token")
                     });
 
-                    await _tokenProvider.InvalidateAsync(cancellationToken);
+                    await _tokenProvider.InvalidateAsync(cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
                 if (!res.IsSuccessStatusCode)
                 {
-                    var failure = await BusinessCentralExceptionFactory.CreateAsync(res, cancellationToken);
+                    var failure = await BusinessCentralExceptionFactory
+                        .CreateAsync(res, cancellationToken).ConfigureAwait(false);
 
                     _observer.OnRequestFailed(new BusinessCentralErrorInfo
                     {
@@ -386,6 +508,29 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
                         ResponseBody = failure.ResponseBody,
                         Exception = failure
                     });
+
+                    if (failure.IsTransient && transientAttempt + 1 < maxAttempts)
+                    {
+                        transientAttempt++;
+
+                        var fromRetryAfter = retry.HonorRetryAfter && failure.RetryAfter != null;
+                        var delay = ComputeDelay(retry, failure.RetryAfter, transientAttempt);
+
+                        _observer.OnRequestRetrying(new BusinessCentralRetryInfo
+                        {
+                            Method = req.Method.Method,
+                            Url = req.RequestUri!.ToString(),
+                            StatusCode = (int)res.StatusCode,
+                            Attempt = transientAttempt,
+                            Delay = delay,
+                            FromRetryAfter = fromRetryAfter
+                        });
+
+                        if (delay > TimeSpan.Zero)
+                            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+
+                        continue;
+                    }
 
                     failureReported = true;
                     throw failure;
@@ -401,8 +546,6 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
 
                 return res;
             }
-
-            throw new InvalidOperationException("Unexpected state in SendWithAuthRetryAsync");
         }
         catch (Exception ex)
         {
@@ -420,13 +563,31 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         }
     }
 
+    /// <summary>
+    /// A server-supplied <c>Retry-After</c> wins over computed backoff; otherwise the delay
+    /// doubles per attempt. Both are capped by <see cref="BusinessCentralRetryOptions.MaxDelay"/>.
+    /// </summary>
+    private static TimeSpan ComputeDelay(
+        BusinessCentralRetryOptions retry,
+        TimeSpan? retryAfter,
+        int attempt)
+    {
+        if (retry.HonorRetryAfter && retryAfter is { } requested)
+            return requested > retry.MaxDelay ? retry.MaxDelay : requested;
+
+        var backoff = TimeSpan.FromMilliseconds(
+            retry.BaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
+
+        return backoff > retry.MaxDelay ? retry.MaxDelay : backoff;
+    }
+
     private static async Task<string?> ReadBodySafeAsync(
         HttpResponseMessage res,
         CancellationToken cancellationToken)
     {
         try
         {
-            return await res.Content.ReadAsStringAsync(cancellationToken);
+            return await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -440,7 +601,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
         string errorMessage,
         CancellationToken cancellationToken)
     {
-        var json = await res.Content.ReadAsStringAsync(cancellationToken);
+        var json = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
         return Deserialize<T>(json, res, errorMessage);
     }
@@ -473,14 +634,5 @@ public sealed class BusinessCentralClient : IBusinessCentralClient
                 null,
                 ex);
         }
-    }
-
-    private sealed class ODataWrapper<T>
-    {
-        [JsonPropertyName("value")]
-        public List<T> Value { get; set; } = [];
-
-        [JsonPropertyName("@odata.nextLink")]
-        public string? NextLink { get; set; }
     }
 }

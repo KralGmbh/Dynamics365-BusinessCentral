@@ -25,6 +25,15 @@ internal sealed class BusinessCentralUrlBuilder
     }
 
     /// <summary>
+    /// Builds a URL against the service root, i.e. without the <c>Company('...')</c>
+    /// segment. Used for tenant-level entity sets such as the company list itself.
+    /// </summary>
+    public string BuildServiceRootUrl(string path)
+    {
+        return $"{_baseUrl}/{EncodePath(path)}";
+    }
+
+    /// <summary>
     /// Builds a URL from a caller-supplied relative OData URL that may already carry
     /// its own query string. Path segments are encoded individually; everything after
     /// the first '?' is passed through verbatim because the caller owns it.
@@ -89,6 +98,19 @@ internal sealed class BusinessCentralUrlBuilder
             query.Add("$orderby=" + Uri.EscapeDataString(options.OrderBy));
         }
 
+        // Expand — joined verbatim so nested syntax such as
+        // "salesOrderLines($select=lineNo)" survives.
+        if (options.Expand.Count > 0)
+        {
+            query.Add("$expand=" + string.Join(",", options.Expand).Replace(" ", "%20"));
+        }
+
+        // Count
+        if (options.IncludeCount)
+        {
+            query.Add("$count=true");
+        }
+
         if (query.Count > 0)
         {
             url += "?" + string.Join("&", query);
@@ -122,7 +144,7 @@ internal sealed class BusinessCentralUrlBuilder
     }
 
     /// <summary>
-    /// Encodes an OData entity key. Unlike <see cref="Uri.EscapeDataString"/> this keeps
+    /// Encodes an OData entity key. Unlike <see cref="Uri.EscapeDataString(string)"/> this keeps
     /// the characters that make up OData key syntax — quotes, '=', ',' and parentheses —
     /// so alternate keys such as <c>No='1000'</c> survive intact, while spaces and other
     /// unsafe characters are still percent-encoded.

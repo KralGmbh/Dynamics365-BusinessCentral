@@ -14,5 +14,7 @@ internal sealed class NullBusinessCentralObserver : IBusinessCentralObserver
 
     public void OnTokenServedFromCache(BusinessCentralTokenInfo token) { }
 
+    public void OnRequestRetrying(BusinessCentralRetryInfo retry) { }
+
     public void OnDeserializationFailed(BusinessCentralErrorInfo error) { }
 }

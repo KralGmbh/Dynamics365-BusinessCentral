@@ -15,16 +15,18 @@ internal sealed class BusinessCentralOptionsValidator : IValidateOptions<Busines
         Require(options.TenantId, nameof(options.TenantId), failures);
         Require(options.ClientId, nameof(options.ClientId), failures);
         Require(options.ClientSecret, nameof(options.ClientSecret), failures);
-        Require(options.BaseUrl, nameof(options.BaseUrl), failures);
         Require(options.Company, nameof(options.Company), failures);
+
+        // These have defaults, so an empty value means the caller cleared them.
+        Require(options.BaseUrl, nameof(options.BaseUrl), failures);
         Require(options.Scope, nameof(options.Scope), failures);
         Require(options.TokenEndpoint, nameof(options.TokenEndpoint), failures);
+        Require(options.Environment, nameof(options.Environment), failures);
 
-        if (!string.IsNullOrWhiteSpace(options.BaseUrl) &&
-            !Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out _))
-        {
-            failures.Add($"{nameof(options.BaseUrl)} must be an absolute URL.");
-        }
+        // Validate the resolved URLs: an unsubstituted placeholder is the failure mode
+        // this is really guarding against.
+        RequireAbsoluteUrl(options.ResolvedBaseUrl, nameof(options.BaseUrl), failures);
+        RequireAbsoluteUrl(options.ResolvedTokenEndpoint, nameof(options.TokenEndpoint), failures);
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success
@@ -35,5 +37,23 @@ internal sealed class BusinessCentralOptionsValidator : IValidateOptions<Busines
     {
         if (string.IsNullOrWhiteSpace(value))
             failures.Add($"{nameof(BusinessCentralOptions)}.{propertyName} must not be empty.");
+    }
+
+    private static void RequireAbsoluteUrl(string? resolved, string propertyName, List<string> failures)
+    {
+        if (string.IsNullOrWhiteSpace(resolved))
+            return;
+
+        if (resolved.Contains('{') || resolved.Contains('}'))
+        {
+            failures.Add(
+                $"{nameof(BusinessCentralOptions)}.{propertyName} still contains an unsubstituted " +
+                $"placeholder after resolution ('{resolved}'). Supported placeholders are " +
+                $"{{tenant}} and {{environment}}.");
+            return;
+        }
+
+        if (!Uri.TryCreate(resolved, UriKind.Absolute, out _))
+            failures.Add($"{nameof(BusinessCentralOptions)}.{propertyName} must be an absolute URL.");
     }
 }

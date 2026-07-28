@@ -49,7 +49,7 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
             return current.Token;
         }
 
-        await _tokenLock.WaitAsync(cancellationToken);
+        await _tokenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -60,7 +60,7 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
                 return current.Token;
             }
 
-            var endpoint = _options.TokenEndpoint.Replace("{TenantId}", _options.TenantId);
+            var endpoint = _options.ResolvedTokenEndpoint;
 
             var form = new Dictionary<string, string>
             {
@@ -77,13 +77,13 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
             var req = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = body };
             req.AddJsonHeaders();
 
-            var res = await _http.SendAsync(req, cancellationToken);
+            var res = await _http.SendAsync(req, cancellationToken).ConfigureAwait(false);
             res.RequestMessage ??= req;
 
             if (!res.IsSuccessStatusCode)
-                throw await BusinessCentralExceptionFactory.CreateAsync(res, cancellationToken);
+                throw await BusinessCentralExceptionFactory.CreateAsync(res, cancellationToken).ConfigureAwait(false);
 
-            var json = await res.Content.ReadAsStringAsync(cancellationToken);
+            var json = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
             var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(json, _jsonOptions)
                                 ?? throw new JsonException("Token response was null.");
@@ -113,7 +113,7 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
 
     public async Task InvalidateAsync(CancellationToken cancellationToken)
     {
-        await _tokenLock.WaitAsync(cancellationToken);
+        await _tokenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try { _token = null; }
         finally { _tokenLock.Release(); }
     }
