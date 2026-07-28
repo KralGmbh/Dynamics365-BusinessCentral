@@ -14,24 +14,6 @@ internal static class HttpRequestExtensions
     private static string ClientVersion() =>
         typeof(HttpRequestExtensions).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
-    public static HttpRequestMessage Clone(this HttpRequestMessage original)
-    {
-        var clone = new HttpRequestMessage(original.Method, original.RequestUri)
-        {
-            Version = original.Version
-        };
-
-        foreach (var header in original.Headers)
-            clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
-
-        // Shared by reference: every payload this client sends is a buffered
-        // ByteArrayContent/StringContent, which can be re-sent on the 401 retry.
-        if (original.Content != null)
-            clone.Content = original.Content;
-
-        return clone;
-    }
-
     public static void AddJsonHeaders(this HttpRequestMessage request)
     {
         request.Headers.Accept.Clear();

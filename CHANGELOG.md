@@ -51,6 +51,14 @@ are silent.
   arrival and every call re-authenticated.
 - **The `User-Agent` reports the real version**, derived from the assembly rather than a
   hard-coded `1.0`.
+- **Retrying a write no longer throws `ObjectDisposedException`.** Retries reused the
+  original request, but `HttpClient` disposes request content once a send completes, so any
+  replayed `POST`/`PATCH`/`PUT` — including the automatic retry after a `401` — failed on
+  the second attempt. Each attempt now builds a fresh request.
+- **A caller-supplied `$skip` is honoured** by `QueryAllAsync`/`QueryStreamAsync`, which
+  previously always restarted from the first page.
+- **Abandoned responses are disposed** on the retry paths, and responses consumed internally
+  are scoped with `using`.
 - `BusinessCentralErrorInfo.ResponseBody` was declared but never populated.
 - The constructor no longer mutates the injected `HttpClient`, which may be pooled.
 
