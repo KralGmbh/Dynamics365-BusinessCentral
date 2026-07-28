@@ -312,6 +312,58 @@ public class RetryTests
 
     #endregion
 
+    #region Backoff bounds
+
+    // A large BaseDelay with a high attempt count overflows TimeSpan, and
+    // TimeSpan.FromMilliseconds throws on both overflow and Infinity — which would turn a
+    // transient failure into an unrelated crash.
+    [Fact]
+    public async Task Huge_Backoff_Is_Clamped_Instead_Of_Overflowing()
+    {
+        var observer = new RecordingObserver();
+
+        var client = TestBase.CreateClient(
+            TestBase.WithToken(_ => Throttled()),
+            observer,
+            o => o.Retry = new BusinessCentralRetryOptions
+            {
+                MaxAttempts = 40,
+                BaseDelay = TimeSpan.FromHours(1),
+                MaxDelay = TimeSpan.Zero,
+                HonorRetryAfter = false
+            });
+
+        var ex = await Record.ExceptionAsync(() => client.QueryAsync<TestEntity>("orders", "true"));
+
+        Assert.IsType<BusinessCentralThrottledException>(ex);
+        Assert.Equal(39, observer.Retries.Count);
+        Assert.All(observer.Retries, r => Assert.Equal(TimeSpan.Zero, r.Delay));
+    }
+
+    [Fact]
+    public async Task Negative_Delays_Are_Floored_At_Zero()
+    {
+        var observer = new RecordingObserver();
+
+        var client = TestBase.CreateClient(
+            TestBase.WithToken(_ => Throttled()),
+            observer,
+            o => o.Retry = new BusinessCentralRetryOptions
+            {
+                MaxAttempts = 3,
+                BaseDelay = TimeSpan.FromSeconds(-5),
+                MaxDelay = TimeSpan.FromSeconds(-1),
+                HonorRetryAfter = false
+            });
+
+        await Assert.ThrowsAsync<BusinessCentralThrottledException>(() =>
+            client.QueryAsync<TestEntity>("orders", "true"));
+
+        Assert.All(observer.Retries, r => Assert.True(r.Delay >= TimeSpan.Zero));
+    }
+
+    #endregion
+
     private sealed class RecordingObserver : IBusinessCentralObserver
     {
         public readonly List<BusinessCentralRetryInfo> Retries = [];

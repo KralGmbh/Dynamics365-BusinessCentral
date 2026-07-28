@@ -59,6 +59,14 @@ are silent.
   previously always restarted from the first page.
 - **Abandoned responses are disposed** on the retry paths, and responses consumed internally
   are scoped with `using`.
+- **`QueryRawAsync<JsonElement>` compiles.** The README has shown that call since 1.0, but
+  `TResponse` was constrained to reference types, so the documented example never built for
+  consumers. The constraint is removed, matching the unconstrained result type on the
+  two-generic write overloads.
+- **Retry backoff cannot overflow.** A large `BaseDelay` combined with a high `MaxAttempts`
+  produced a value `TimeSpan` cannot represent, and `TimeSpan.FromMilliseconds` throws on
+  that — turning a transient failure into an unrelated crash. Delays are now clamped, and
+  negative configured values floor at zero.
 - `BusinessCentralErrorInfo.ResponseBody` was declared but never populated.
 - The constructor no longer mutates the injected `HttpClient`, which may be pooled.
 

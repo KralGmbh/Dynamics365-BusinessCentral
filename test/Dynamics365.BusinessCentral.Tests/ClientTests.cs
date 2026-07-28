@@ -1869,6 +1869,32 @@ public partial class ClientTests
 
     #region Raw URL Tests
 
+    // The README has documented QueryRawAsync<JsonElement> since 1.0, but the old
+    // `where TResponse : class` constraint meant it never compiled for consumers.
+    [Fact]
+    public async Task QueryRawAsync_Accepts_A_Value_Type_Response()
+    {
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+            TestBase.Json("{\"value\":[{\"no\":\"1000\"}]}")));
+
+        var raw = await client.QueryRawAsync<JsonElement>("salesOrders?$top=5");
+
+        Assert.Equal(JsonValueKind.Object, raw.ValueKind);
+        Assert.Equal("1000", raw.GetProperty("value")[0].GetProperty("no").GetString());
+    }
+
+    [Fact]
+    public async Task QueryRawAsync_Still_Accepts_Reference_Types()
+    {
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+            TestBase.Json("{\"id\":7,\"name\":\"Seven\"}")));
+
+        var typed = await client.QueryRawAsync<TestRawResponse>("orders/raw");
+
+        Assert.Equal(7, typed.Id);
+    }
+
+
     [Fact]
     public async Task QueryRawAsync_Preserves_Query_String()
     {

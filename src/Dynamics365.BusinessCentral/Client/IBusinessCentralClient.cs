@@ -111,13 +111,15 @@ public interface IBusinessCentralClient
     /// Executes a raw GET request against the given relative OData URL and deserializes the full response body.
     /// The path may include its own query string, which is sent verbatim.
     /// </summary>
-    /// <typeparam name="TResponse">The type to deserialize the response body into.</typeparam>
+    /// <typeparam name="TResponse">
+    /// The type to deserialize the response body into. Unconstrained, so value types such as
+    /// <see cref="System.Text.Json.JsonElement"/> work for responses you have no model for.
+    /// </typeparam>
     /// <param name="path">Relative OData URL including any query parameters.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task<TResponse> QueryRawAsync<TResponse>(
         string path,
-        CancellationToken cancellationToken = default)
-        where TResponse : class;
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Executes a PATCH request to partially update an existing Business Central entity.

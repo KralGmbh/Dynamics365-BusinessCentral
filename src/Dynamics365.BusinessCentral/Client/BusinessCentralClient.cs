@@ -148,7 +148,6 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     public async Task<TResponse> QueryRawAsync<TResponse>(
         string path,
         CancellationToken cancellationToken = default)
-        where TResponse : class
     {
         // BuildRawUrl (not BuildEntityUrl) so a caller-supplied query string such as
         // "salesOrders?$top=5" survives instead of being percent-encoded into the path.
@@ -753,14 +752,27 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         TimeSpan? retryAfter,
         int attempt)
     {
+        var max = Floor(retry.MaxDelay);
+
         if (retry.HonorRetryAfter && retryAfter is { } requested)
-            return requested > retry.MaxDelay ? retry.MaxDelay : requested;
+            return Clamp(requested, max);
 
-        var backoff = TimeSpan.FromMilliseconds(
-            retry.BaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
+        var milliseconds = Floor(retry.BaseDelay).TotalMilliseconds * Math.Pow(2, attempt - 1);
 
-        return backoff > retry.MaxDelay ? retry.MaxDelay : backoff;
+        // A large BaseDelay or a high attempt count overflows to a value TimeSpan cannot
+        // represent — or to Infinity — and TimeSpan.FromMilliseconds throws on both. Compare
+        // in double space first so a transient failure never becomes a crash.
+        if (double.IsNaN(milliseconds) || milliseconds >= max.TotalMilliseconds)
+            return max;
+
+        return Clamp(TimeSpan.FromMilliseconds(milliseconds), max);
     }
+
+    private static TimeSpan Floor(TimeSpan value) =>
+        value < TimeSpan.Zero ? TimeSpan.Zero : value;
+
+    private static TimeSpan Clamp(TimeSpan value, TimeSpan max) =>
+        value < TimeSpan.Zero ? TimeSpan.Zero : value > max ? max : value;
 
     private static async Task<string?> ReadBodySafeAsync(
         HttpResponseMessage res,
