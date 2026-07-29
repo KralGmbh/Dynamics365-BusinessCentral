@@ -94,4 +94,39 @@ public class RetryDelayTests
 
         Assert.Equal(TimeSpan.FromSeconds(1), RetryHelper.ComputeDelay(retry, null, attempt: 1));
     }
+
+    // JitterFactor is public input reachable via configuration binding: a non-finite or
+    // absurd value must degrade to a capped delay, never to a TimeSpan overflow crash
+    // that turns a transient failure into an unrelated exception.
+    [Theory]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.MaxValue)]
+    public void NonFinite_Or_Huge_JitterFactor_Caps_At_MaxDelay_Instead_Of_Throwing(double factor)
+    {
+        var retry = new BusinessCentralRetryOptions
+        {
+            BaseDelay = TimeSpan.FromSeconds(1),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            JitterFactor = factor
+        };
+
+        for (var i = 0; i < 50; i++)
+        {
+            var delay = RetryHelper.ComputeDelay(retry, null, attempt: 1);
+            Assert.InRange(delay, TimeSpan.FromSeconds(1), retry.MaxDelay);
+        }
+    }
+
+    [Fact]
+    public void NaN_JitterFactor_Is_Treated_As_Disabled()
+    {
+        var retry = new BusinessCentralRetryOptions
+        {
+            BaseDelay = TimeSpan.FromSeconds(1),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            JitterFactor = double.NaN
+        };
+
+        Assert.Equal(TimeSpan.FromSeconds(1), RetryHelper.ComputeDelay(retry, null, attempt: 1));
+    }
 }
