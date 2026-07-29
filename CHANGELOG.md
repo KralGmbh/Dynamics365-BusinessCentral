@@ -9,6 +9,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Default implementations on every `IBusinessCentralClient` member.** Hand-written test
+  fakes now implement only the members they exercise; everything else throws
+  `NotSupportedException` naming the member. Interface growth no longer breaks consumer
+  builds. `FirstOrDefaultAsync` composes over `QueryAsync`, so fakes get it for free.
+- **Single-entity reads on the path-based API.** `GetAsync<T>(path, key, select?)` fetches
+  by systemId or alternate key and returns `null` on `404` — "does it exist" is a question,
+  not an error. `FirstOrDefaultAsync<T>(path, filter?, select?)` sends `$top=1`.
+- **`BusinessCentralHttpClients`** exposes the package's two `IHttpClientFactory` client
+  names, so a global resilience handler (e.g. Aspire's `AddStandardResilienceHandler`) can
+  exempt them instead of double-retrying — the README's *"Composing with an existing
+  resilience pipeline"* section shows how.
+- **Predicate properties on `BusinessCentralException`**: `IsNotFound`, `IsThrottled`,
+  `IsValidation`, `IsAuth`, `IsConnectionFailure`. The subtypes are sealed siblings, so
+  `catch (BusinessCentralServerException ex) when (ex.StatusCode == NotFound)` compiles but
+  never matches; `when (ex.IsNotFound)` is the supported form.
+- **`BusinessCentralField.Of<T>(selector)`** resolves a property selector to its wire name
+  (`[JsonPropertyName]` first, then the camelCase policy), and **`EntityPath` is now
+  public** — path-based consumers can delete hand-maintained field/path constants.
+
 - **`BusinessCentralConnectionException`.** Connection-level failures and client-side
   timeouts — where no response was received at all — now surface as a
   `BusinessCentralException` subtype (`StatusCode` is `0`) instead of escaping as raw

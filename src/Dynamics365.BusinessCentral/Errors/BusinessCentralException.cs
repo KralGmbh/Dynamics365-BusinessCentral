@@ -44,6 +44,28 @@ public abstract class BusinessCentralException : Exception
     /// </summary>
     public virtual bool IsTransient => false;
 
+    /// <summary>The entity or entity set does not exist (<c>404</c>).</summary>
+    /// <remarks>
+    /// The exception subtypes are sealed siblings, so
+    /// <c>catch (BusinessCentralServerException ex) when (ex.StatusCode == HttpStatusCode.NotFound)</c>
+    /// can never match — the 404 is a <see cref="BusinessCentralNotFoundException"/>. These
+    /// predicates make the safe form the obvious one:
+    /// <c>catch (BusinessCentralException ex) when (ex.IsNotFound)</c>.
+    /// </remarks>
+    public bool IsNotFound => StatusCode == HttpStatusCode.NotFound;
+
+    /// <summary>The request was throttled (<c>429</c>).</summary>
+    public bool IsThrottled => StatusCode == HttpStatusCode.TooManyRequests;
+
+    /// <summary>Business Central rejected the request as invalid (<c>400</c>).</summary>
+    public bool IsValidation => StatusCode == HttpStatusCode.BadRequest;
+
+    /// <summary>Authentication or authorisation failed (<c>401</c> / <c>403</c>).</summary>
+    public bool IsAuth => StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
+
+    /// <summary>No response was received: connection failure or client-side timeout.</summary>
+    public bool IsConnectionFailure => StatusCode == 0;
+
     /// <summary>Creates a new <see cref="BusinessCentralException"/>.</summary>
     /// <param name="message">Short, single-line description of the failure.</param>
     /// <param name="statusCode">HTTP status code returned by Business Central.</param>

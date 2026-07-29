@@ -13,9 +13,11 @@ so read that section even if the build is green.
 New members: `Company`, `ForCompany`, `Query<T>()` (two overloads), `QueryStreamAsync<T>`,
 `GetCompaniesAsync`, and two-generic `PostAsync`/`PatchAsync`/`PutAsync`.
 
-Mocking libraries (Moq, NSubstitute, FakeItEasy) absorb this automatically. **A
-hand-written test fake implementing the interface will not compile** until the new members
-are added.
+Mocking libraries (Moq, NSubstitute, FakeItEasy) absorb this automatically. Hand-written
+test fakes keep compiling too: **every interface member has a default implementation**, so
+a fake only implements the members it actually exercises. An unimplemented member throws
+`NotSupportedException` naming itself, and `FirstOrDefaultAsync` composes over `QueryAsync`
+so fakes get it for free.
 
 ### Nothing else, in practice
 
@@ -64,7 +66,9 @@ catch (BusinessCentralException ex) { … }          // sees everything
 > did: `BusinessCentralServerException` never caught `400`, `401`, `403` or `404` either —
 > those are `Validation`, `Auth`, `Auth` and `NotFound`, all sealed siblings. A guard like
 > `catch (BusinessCentralServerException ex) when (ex.StatusCode == HttpStatusCode.NotFound)`
-> can never match. Catch `BusinessCentralNotFoundException`, or the base type.
+> can never match. Catch `BusinessCentralNotFoundException`, or use the predicates on the
+> base type — `catch (BusinessCentralException ex) when (ex.IsNotFound)` — which exist
+> precisely because this trap compiles.
 
 ### Transient failures are retried automatically
 
@@ -91,10 +95,13 @@ exception on `InnerException`. Cancelling through your own `CancellationToken` s
 `OperationCanceledException`, unwrapped.
 
 If you already have an outer retry policy (Polly, Wolverine, a message broker), the two now
-compose multiplicatively. Consider lowering `Retry.MaxAttempts`, or disabling it:
+compose multiplicatively. The package's HTTP clients are addressable by name
+(`BusinessCentralHttpClients.Client` / `.Token`), so the preferred fix is exempting them
+from the outer handler and keeping this retry — see the README section *"Composing with an
+existing resilience pipeline"*. Alternatively, lower `Retry.MaxAttempts` or disable it:
 
 ```csharp
-options.Retry.Enabled = false;   // 1.0 behaviour
+options.Retry.Enabled = false;   // 1.0 behaviour — but a generic outer handler replays POST
 ```
 
 ### `QueryAllAsync` may return more rows than before
@@ -256,7 +263,8 @@ There is no deprecation on the path-based API; migrate at your own pace, or not 
 
 ## 5. Checklist
 
-- [ ] Update hand-written `IBusinessCentralClient` fakes, if any
+- [ ] Hand-written `IBusinessCentralClient` fakes keep compiling (default interface
+      methods); implement any newly-exercised member, delete `NotSupportedException` stubs
 - [ ] Audit `catch (BusinessCentralServerException)` — it does not see `400`/`401`/`403`/`404`/`429`
 - [ ] Decide on retry: keep it, tune `MaxAttempts`, or `Retry.Enabled = false`
 - [ ] Re-check any logic that assumed a `204` write failed

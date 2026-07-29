@@ -35,10 +35,10 @@ CI: `.github/workflows/sonar.yml` builds + tests on net8.0 and runs SonarCloud o
 
 `src/Dynamics365.BusinessCentral/` — one assembly, folders by concern:
 
-- **`Client/`** — `BusinessCentralClient` (sealed, the only implementation of `IBusinessCentralClient`) plus the internal `BusinessCentralTokenProvider`, `BusinessCentralUrlBuilder` and `HttpRequestExtensions`.
+- **`Client/`** — `BusinessCentralClient` (sealed, the only implementation of `IBusinessCentralClient`) plus the internal `BusinessCentralTokenProvider`, `BusinessCentralUrlBuilder` and `HttpRequestExtensions`. Every `IBusinessCentralClient` member has a **default implementation** so hand-written consumer fakes keep compiling across interface growth — a new member must either throw via the interface's private `NotImplemented` helper or, when it can be composed from other members (like `FirstOrDefaultAsync` over `QueryAsync`), do that so fakes inherit it. `DefaultInterfaceTests` pins the contract.
 - **`OData/`** — the typed query surface: `IBusinessCentralQuery<T>`/`BusinessCentralQuery<T>` (fluent builder), `PropertyPath` (selector → field name), `EntityPath` + `BusinessCentralEntityAttribute` (type → entity set), `Filter`/`ODataFilter`/`FilterExtensions`, `QueryOptions`, `ODataResponse<T>`, `BusinessCentralPage<T>`, `BusinessCentralCompany`.
 - **`Options/`** — `BusinessCentralOptions` (credentials, base URL, company), `BusinessCentralOptionsValidator`, and `BusinessCentralJson.Options`, the single shared `JsonSerializerOptions` (camelCase policy, case-insensitive read) used by both the client and the exception factory.
-- **`Errors/`** — `BusinessCentralException` base + five sealed subtypes (incl. `BusinessCentralThrottledException`); `BusinessCentralExceptionFactory` maps status codes and parses `Retry-After`.
+- **`Errors/`** — `BusinessCentralException` base + six sealed subtypes (incl. `BusinessCentralThrottledException` and `BusinessCentralConnectionException`, whose `StatusCode` is `0` — no response); `BusinessCentralExceptionFactory` maps status codes and parses `Retry-After`. The subtypes are sealed siblings, so the base carries predicates (`IsNotFound`, `IsThrottled`, `IsValidation`, `IsAuth`, `IsConnectionFailure`) — add one when adding a subtype.
 - **`Diagnostics/`** — `IBusinessCentralObserver` and its info DTOs.
 - **`ServiceCollectionExtensions.cs`** — `AddBusinessCentral` / `AddObserver<T>`.
 
@@ -108,7 +108,7 @@ There is no `ILogger` dependency. Instead the client takes an optional `IBusines
 
 ### DI registration
 
-Two `AddBusinessCentral` overloads (lambda and `IConfiguration`) share `AddBusinessCentralCore`, which wires options + `BusinessCentralOptionsValidator` (an `IValidateOptions<>` that names *each* missing setting rather than collapsing to one boolean), a named token `HttpClient`, the singleton `BusinessCentralTokenProvider`, and the typed client. Both HTTP clients are registered under explicit names (`TokenHttpClientName`, `ClientHttpClientName`) so tests can swap primary handlers without replacing the registration.
+Two `AddBusinessCentral` overloads (lambda and `IConfiguration`) share `AddBusinessCentralCore`, which wires options + `BusinessCentralOptionsValidator` (an `IValidateOptions<>` that names *each* missing setting rather than collapsing to one boolean), a named token `HttpClient`, the singleton `BusinessCentralTokenProvider`, and the typed client. Both HTTP clients are registered under explicit names — public via `BusinessCentralHttpClients.Token`/`.Client`, a deliberate API so consumers can exempt them from global resilience handlers — so tests can swap primary handlers without replacing the registration.
 
 The typed client uses the explicit-factory overload of `AddHttpClient`, not `ActivatorUtilities` — the constructor taking `BusinessCentralTokenProvider` is `internal` and would otherwise never be selected.
 

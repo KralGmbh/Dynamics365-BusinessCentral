@@ -155,7 +155,7 @@ public class ServiceCollectionExtensionsTests
         // Configure the named handlers rather than re-registering the typed client,
         // which would replace the registration under test.
         services
-            .AddHttpClient(ServiceCollectionExtensions.TokenHttpClientName)
+            .AddHttpClient(BusinessCentralHttpClients.Token)
             .ConfigurePrimaryHttpMessageHandler(() => new FakeHttpHandler(_ =>
             {
                 Interlocked.Increment(ref tokenCalls);
@@ -166,7 +166,7 @@ public class ServiceCollectionExtensionsTests
             }));
 
         services
-            .AddHttpClient(ServiceCollectionExtensions.ClientHttpClientName)
+            .AddHttpClient(BusinessCentralHttpClients.Client)
             .ConfigurePrimaryHttpMessageHandler(() => new FakeHttpHandler(_ =>
                 new HttpResponseMessage(HttpStatusCode.OK)
                 {

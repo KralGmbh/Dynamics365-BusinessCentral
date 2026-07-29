@@ -7,7 +7,7 @@ namespace Dynamics365.BusinessCentral.OData;
 /// Resolves the OData entity set path for a CLR type from
 /// <see cref="BusinessCentralEntityAttribute"/>.
 /// </summary>
-internal static class EntityPath
+public static class EntityPath
 {
     private static readonly ConcurrentDictionary<Type, string> _cache = new();
 

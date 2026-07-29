@@ -24,6 +24,20 @@ internal sealed class BusinessCentralUrlBuilder
         return $"{BuildCompanyBase()}/{EncodePath(path)}({EncodeKey(key)})";
     }
 
+    public string BuildEntityUrl(string path, string key, IEnumerable<string>? select)
+    {
+        var url = BuildEntityUrl(path, key);
+
+        var fields = select?
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .ToList();
+
+        if (fields is { Count: > 0 })
+            url += "?$select=" + string.Join(",", fields.Select(Uri.EscapeDataString));
+
+        return url;
+    }
+
     /// <summary>
     /// Builds a URL against the service root, i.e. without the <c>Company('...')</c>
     /// segment. Used for tenant-level entity sets such as the company list itself.

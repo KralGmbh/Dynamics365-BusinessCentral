@@ -120,6 +120,45 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     }
 
     /// <inheritdoc />
+    public async Task<TEntity?> GetAsync<TEntity>(
+        string path,
+        string key,
+        IEnumerable<string>? select = null,
+        CancellationToken cancellationToken = default)
+    {
+        var url = _urlBuilder.BuildEntityUrl(path, key, select);
+
+        try
+        {
+            using var res = await SendWithAuthRetryAsync(
+                () => CreateJsonRequest(HttpMethod.Get, url), cancellationToken).ConfigureAwait(false);
+
+            return await DeserializeAsync<TEntity>(
+                res,
+                "Failed to deserialize Business Central response.",
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (BusinessCentralNotFoundException)
+        {
+            // "Does this entity exist" is a question, not an error.
+            return default;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<TEntity?> FirstOrDefaultAsync<TEntity>(
+        string path,
+        ODataFilter? filter = null,
+        IEnumerable<string>? select = null,
+        CancellationToken cancellationToken = default)
+    {
+        var page = await QueryAsync<TEntity>(path, filter, o => o.WithTop(1), select, cancellationToken)
+            .ConfigureAwait(false);
+
+        return page.Count == 0 ? default : page[0];
+    }
+
+    /// <inheritdoc />
     public Task<List<TEntity>> QueryAsync<TEntity>(
         string path,
         ODataFilter? filter = null,
