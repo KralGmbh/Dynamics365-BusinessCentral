@@ -9,6 +9,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`Dynamics365.BusinessCentral.Testing`**, a companion NuGet package. `FakeBusinessCentral`
+  runs a real `BusinessCentralClient` over a scripted transport: consumers script responses
+  (`EnqueuePage` with `nextLink`/`@odata.count`, `EnqueueEntity`, `EnqueueError` with
+  `Retry-After`, `EnqueueNetworkFailure`, `EnqueueNoContent`) and assert the exact OData URL
+  and body each call produced via `Requests`. Token acquisition is answered automatically;
+  unscripted requests throw a message naming the request. Versioned in lockstep with the
+  main package.
+
 - **`Retry.JitterFactor`** (default `0.2`): every retry delay — computed backoff *and*
   honoured `Retry-After` — is spread by `random(0, delay × factor)`, capped by `MaxDelay`,
   so concurrent callers throttled at the same moment stop retrying in lockstep and

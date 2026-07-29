@@ -367,3 +367,28 @@ services.AddObserver<MyObserver>();
 
 Every member except the core request callbacks has a default implementation, so you only
 override what you care about.
+
+# 🧰 Testing
+
+The companion package [`Dynamics365.BusinessCentral.Testing`](https://www.nuget.org/packages/Dynamics365.BusinessCentral.Testing)
+runs a **real** client over a scripted transport, so tests exercise URL building, filter
+rendering, paging, retry and deserialization — and can assert the exact OData a call
+produced, which a mock of `IBusinessCentralClient` never can:
+
+```csharp
+using var bc = new FakeBusinessCentral();
+bc.EnqueuePage(new Item { No = "X", Description = "Pump" });
+
+var items = await bc.Client.QueryAsync<Item>("items",
+    Filter.Equals("no", "X"), select: ["no", "description"]);
+
+Assert.Equal(
+    "/Company('TEST')/items?$filter=no eq 'X'&$select=no,description",
+    bc.Requests.Single().DecodedPathAndQuery);
+```
+
+Multi-page responses (`EnqueuePage(..., nextLink: "page2")`), failures by status code
+(`EnqueueError(HttpStatusCode.TooManyRequests, retryAfter: …)` raises the matching
+exception subtype) and network failures are all scriptable; token acquisition is answered
+automatically. For stateful fakes, every `IBusinessCentralClient` member has a default
+implementation, so a hand-written fake implements only the members it uses.
