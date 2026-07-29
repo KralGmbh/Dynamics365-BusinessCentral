@@ -39,4 +39,37 @@ public class FilterFormatTests
 
         Assert.Equal("postingDate in (2026-07-01,2026-07-02)", filter.Value);
     }
+
+    // A kindless DateTime (parsed from config, loaded from a database) used to be run
+    // through ToUniversalTime, which assumes local — so the literal depended on the
+    // machine's timezone. It is now taken to already be UTC.
+    [Fact]
+    public void Unspecified_DateTime_Is_Treated_As_Utc_Not_Shifted()
+    {
+        var value = new DateTime(2026, 7, 29, 12, 0, 0, DateTimeKind.Unspecified);
+
+        var filter = Filter.GreaterOrEqual("lastModifiedDateTime", value);
+
+        Assert.Equal("lastModifiedDateTime ge 2026-07-29T12:00:00.0000000Z", filter.Value);
+    }
+
+    [Fact]
+    public void Utc_DateTime_Is_Formatted_Unchanged()
+    {
+        var value = new DateTime(2026, 7, 29, 12, 0, 0, DateTimeKind.Utc);
+
+        var filter = Filter.Equals("lastModifiedDateTime", value);
+
+        Assert.Equal("lastModifiedDateTime eq 2026-07-29T12:00:00.0000000Z", filter.Value);
+    }
+
+    [Fact]
+    public void Local_DateTime_Is_Still_Converted_To_Utc()
+    {
+        var value = new DateTime(2026, 7, 29, 12, 0, 0, DateTimeKind.Local);
+
+        var filter = Filter.Equals("lastModifiedDateTime", value);
+
+        Assert.Equal($"lastModifiedDateTime eq {value.ToUniversalTime():O}", filter.Value);
+    }
 }

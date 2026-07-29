@@ -144,7 +144,7 @@ public static class Filter
         {
             null => "null",
             string s => $"'{s.Replace("'", "''")}'",
-            DateTime dt => dt.ToUniversalTime().ToString("O"),
+            DateTime dt => FormatDateTime(dt),
             DateTimeOffset dto => dto.ToUniversalTime().ToString("O"),
             // Edm.Date / Edm.TimeOfDay literals. Without these both fall through to
             // Convert.ToString, whose culture-formatted output ("07/29/2026") Business
@@ -156,4 +156,23 @@ public static class Filter
             Enum e => $"'{e}'",
             _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? "null"
         };
+
+    /// <summary>
+    /// Formats a <see cref="DateTime"/> as a UTC OData literal.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DateTimeKind.Unspecified"/> is taken to already be UTC rather than local:
+    /// <see cref="DateTime.ToUniversalTime"/> would assume local and shift the value by the
+    /// machine's timezone, making the filter depend on where the code happens to run.
+    /// Business Central stores datetimes in UTC, so a kindless value — parsed from config,
+    /// loaded from a database — almost always is UTC already.
+    /// </remarks>
+    private static string FormatDateTime(DateTime value)
+    {
+        var utc = value.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(value, DateTimeKind.Utc)
+            : value.ToUniversalTime();
+
+        return utc.ToString("O");
+    }
 }

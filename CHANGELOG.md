@@ -27,6 +27,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`WithTop` is a result cap in `QueryAllAsync`/`QueryStreamAsync`**, matching its own
+  documentation and the fluent builder's `Top()`. It was previously repurposed as the page
+  size — `WithTop(10)` returned the entire collection in pages of 10 — and was silently
+  ignored outright when `WithPageSize` was also set. Requests never overshoot the cap
+  (`$top` shrinks to what is still wanted). Use `WithPageSize` to size round trips.
+- **Kindless `DateTime` filter values are no longer shifted by the machine's timezone.**
+  `DateTimeKind.Unspecified` — the kind of anything parsed from config or loaded from a
+  database — was run through `ToUniversalTime()`, which assumes local time, so the same
+  filter matched different rows depending on where the code ran. Unspecified is now taken
+  to already be UTC. `Utc` and `Local` values are unaffected.
 - **`DateOnly` and `TimeOnly` filter values produce valid OData literals**
   (`2026-07-29`, `13:45:30.0000000`). They previously fell through to a culture-formatted
   string such as `07/29/2026`, which Business Central rejects — notably breaking filters

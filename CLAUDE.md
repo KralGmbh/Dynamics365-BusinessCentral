@@ -91,7 +91,7 @@ Two paging implementations exist and must stay in agreement: `BusinessCentralCli
 2. Once `serverDriven`, a missing nextLink means the collection is exhausted — the `$top` short-page rule no longer applies.
 3. Otherwise stop on the first page shorter than the requested size.
 
-`QueryOptions.PageSize` is rows-per-round-trip; `Top` is a result cap. `PageSize ?? Top ?? 1000` keeps the old `WithTop`-as-page-size behaviour working.
+`QueryOptions.PageSize` is rows-per-round-trip; `Top` is a result cap — in both implementations. Each computes the next request's `$top` via `NextTop(pageSize, limit, emitted)` so a request never overshoots the cap. The old `WithTop`-as-page-size behaviour is gone (2.0); `WithPageSize` is the only way to size round trips.
 
 ### Writes
 

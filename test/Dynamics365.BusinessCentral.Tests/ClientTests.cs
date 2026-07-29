@@ -2070,10 +2070,54 @@ public partial class ClientTests
             };
         });
 
-        var result = await client.QueryAllAsync<TestEntity>("orders", options: o => o.WithTop(2));
+        var result = await client.QueryAllAsync<TestEntity>("orders", options: o => o.WithPageSize(2));
 
         Assert.Equal(5, result.Count);
         Assert.Equal(3, dataCalls);
+    }
+
+    // Top is a result cap here, exactly as its documentation says — the same contract as
+    // the fluent builder's Top(). It used to be silently repurposed as the page size.
+    [Fact]
+    public async Task QueryAll_Honours_Top_As_A_Result_Cap()
+    {
+        var dataCalls = 0;
+        var requests = new List<string>();
+
+        var client = TestBase.CreateClient(TestBase.WithToken(req =>
+        {
+            dataCalls++;
+            requests.Add(req.RequestUri!.ToString());
+
+            return TestBase.Json("{\"value\":[{\"id\":1},{\"id\":2}]}");
+        }));
+
+        var result = await client.QueryAllAsync<TestEntity>(
+            "orders", options: o => o.WithTop(3).WithPageSize(2));
+
+        Assert.Equal(3, result.Count);
+        Assert.Equal(2, dataCalls);
+
+        // The second request never overshoots the cap: only one row is still wanted.
+        Assert.Contains("$top=2", requests[0]);
+        Assert.Contains("$top=1", requests[1]);
+    }
+
+    [Fact]
+    public async Task QueryAll_Top_Alone_Stops_After_Top_Rows()
+    {
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+        {
+            dataCalls++;
+            return TestBase.Json("{\"value\":[{\"id\":1},{\"id\":2}]}");
+        }));
+
+        var result = await client.QueryAllAsync<TestEntity>("orders", options: o => o.WithTop(2));
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(1, dataCalls);
     }
 
     #endregion

@@ -103,6 +103,21 @@ It now follows `@odata.nextLink`. Where Business Central applied a server-side p
 below the requested `$top`, 1.0 stopped early and silently truncated. Reconciliation logic
 that assumed the old result size should be re-checked.
 
+### `QueryAllAsync` with `WithTop` may return far fewer rows
+
+The opposite direction: `WithTop(n)` was 1.0's page size and did not limit results; it is
+now a result cap, as documented. A call like `QueryAllAsync(..., o => o.WithTop(500))`
+that used to fetch *everything* in pages of 500 now returns at most 500 rows. Replace it
+with `WithPageSize(500)` to keep the old behaviour — see §3.
+
+### Kindless `DateTime` filters are no longer shifted by the machine's timezone
+
+1.0 passed every `DateTime` through `ToUniversalTime()`, which treats
+`DateTimeKind.Unspecified` — anything parsed from config or loaded from a database — as
+*local* time. The same filter matched different rows depending on the server's timezone.
+2.0 takes Unspecified as already UTC. If you relied on the local-time interpretation,
+apply `DateTime.SpecifyKind(value, DateTimeKind.Local)` before filtering.
+
 ### `Exception.Message` is now a single line
 
 1.0 baked the status, URL and **entire response body** into `Message`. 2.0 keeps it to one
@@ -133,9 +148,15 @@ If you built workarounds for either, remove them.
 
 ### `WithTop` vs `WithPageSize`
 
-In `QueryAllAsync`, `WithTop(n)` meant *page size*, not a result limit. `WithPageSize(n)`
-now says that explicitly. `WithTop` still works there (`PageSize ?? Top ?? 1000`), but
-prefer the clearer name.
+In 1.0's `QueryAllAsync`, `WithTop(n)` meant *page size*, not a result limit — it paged
+through the entire collection `n` rows at a time. In 2.0 `WithTop` is what it says: a
+result cap, everywhere. `QueryAllAsync(..., o => o.WithTop(10))` now returns at most 10
+rows. Use `WithPageSize(n)` for the old meaning:
+
+```csharp
+// 1.0: WithTop(500) fetched everything, 500 rows per round trip. 2.0 equivalent:
+await client.QueryAllAsync<SalesOrder>("salesOrders", options: o => o.WithPageSize(500));
+```
 
 ### Chained ordering
 
@@ -240,5 +261,7 @@ There is no deprecation on the path-based API; migrate at your own pace, or not 
 - [ ] Decide on retry: keep it, tune `MaxAttempts`, or `Retry.Enabled = false`
 - [ ] Re-check any logic that assumed a `204` write failed
 - [ ] Re-check result-size assumptions around `QueryAllAsync`
+- [ ] Replace `WithTop` used as a page size with `WithPageSize`
+- [ ] Check `DateTime` filter values for `Kind=Unspecified` semantics (now read as UTC)
 - [ ] Replace `dynamic` writes with the two-generic overloads
 - [ ] Optionally simplify configuration and drop hand-built `BaseUrl`

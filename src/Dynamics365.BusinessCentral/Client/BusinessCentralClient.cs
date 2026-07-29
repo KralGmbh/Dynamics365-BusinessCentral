@@ -193,13 +193,16 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         var baseOptions = new QueryOptions();
         options?.Invoke(baseOptions);
 
+        // Top is a result cap, exactly as documented on WithTop; PageSize sizes the round
+        // trips. This mirrors BusinessCentralQuery<T>.StreamAsync — the two implementations
+        // must stay in agreement.
+        var limit = baseOptions.Top;
+
         // $top=0 is a request for no rows at all.
-        if (baseOptions.Top == 0)
+        if (limit == 0)
             yield break;
 
-        // Top has historically doubled as the page size here; PageSize now says it plainly
-        // and wins when both are set.
-        var pageSize = baseOptions.PageSize ?? baseOptions.Top ?? DefaultPageSize;
+        var pageSize = baseOptions.PageSize ?? DefaultPageSize;
 
         // Guards the loop below: with a non-positive page size the "short page" termination
         // check can never fire, so it would request the same empty page forever. The public
@@ -212,9 +215,12 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         // Honour a caller-supplied $skip as the starting offset instead of silently
         // restarting from the first page.
         var skip = baseOptions.Skip ?? 0;
+        var emitted = 0;
+
+        var requested = NextTop(pageSize, limit, emitted);
 
         var page = await FetchPageAsync<TEntity>(
-                path, filterValue, PageOptions(baseOptions, pageSize, skip), select, cancellationToken)
+                path, filterValue, PageOptions(baseOptions, requested, skip), select, cancellationToken)
             .ConfigureAwait(false);
 
         var serverDriven = false;
@@ -226,7 +232,12 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             foreach (var entity in page.Value)
             {
                 yield return entity;
+
+                emitted++;
                 inPage++;
+
+                if (limit is { } cap && emitted >= cap)
+                    yield break;
             }
 
             // Server-driven paging wins: when Business Central sends @odata.nextLink it
@@ -245,22 +256,33 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
                 yield break;
 
             // No nextLink and a short page means the collection is exhausted.
-            if (inPage < pageSize)
+            if (inPage < requested)
                 yield break;
 
             skip += inPage;
+            requested = NextTop(pageSize, limit, emitted);
 
             page = await FetchPageAsync<TEntity>(
-                    path, filterValue, PageOptions(baseOptions, pageSize, skip), select, cancellationToken)
+                    path, filterValue, PageOptions(baseOptions, requested, skip), select, cancellationToken)
                 .ConfigureAwait(false);
         }
     }
 
-    private static QueryOptions PageOptions(QueryOptions baseOptions, int pageSize, int skip)
+    /// <summary>Page size for the next request, never overshooting a caller-set <c>$top</c>.</summary>
+    private static int NextTop(int pageSize, int? limit, int emitted)
+    {
+        if (limit is not { } cap)
+            return pageSize;
+
+        var remaining = cap - emitted;
+        return remaining < pageSize ? remaining : pageSize;
+    }
+
+    private static QueryOptions PageOptions(QueryOptions baseOptions, int top, int skip)
     {
         var options = new QueryOptions
         {
-            Top = pageSize,
+            Top = top,
             Skip = skip,
             IncludeCount = baseOptions.IncludeCount
         };
