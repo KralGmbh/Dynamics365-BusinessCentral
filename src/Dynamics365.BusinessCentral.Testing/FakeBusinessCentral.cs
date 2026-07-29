@@ -217,11 +217,24 @@ public sealed class FakeBusinessCentral : IDisposable
             ? nextLink
             : $"{DefaultBaseUrl}/{nextLink.TrimStart('/')}";
 
+    /// <summary>
+    /// The client sends exactly one form-urlencoded POST: the client-credentials grant.
+    /// Data writes are always <c>application/json</c>, so a JSON payload that merely
+    /// <i>contains</i> the grant string cannot be misclassified.
+    /// </summary>
+    private static bool IsTokenRequest(HttpRequestMessage request, string? body) =>
+        request.Method == HttpMethod.Post &&
+        string.Equals(
+            request.Content?.Headers.ContentType?.MediaType,
+            "application/x-www-form-urlencoded",
+            StringComparison.OrdinalIgnoreCase) &&
+        body?.Contains("grant_type=client_credentials") == true;
+
     private HttpResponseMessage Respond(HttpRequestMessage request, string? body)
     {
         // The token request is infrastructure, not behaviour under test: answer it
         // automatically so no test ever scripts auth.
-        if (body != null && body.Contains("grant_type=client_credentials"))
+        if (IsTokenRequest(request, body))
         {
             Interlocked.Increment(ref _tokenRequestCount);
 

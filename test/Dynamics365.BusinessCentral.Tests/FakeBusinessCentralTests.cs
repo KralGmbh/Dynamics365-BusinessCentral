@@ -123,6 +123,23 @@ public class FakeBusinessCentralTests
         Assert.Contains("EnqueuePage", ex.Message);
     }
 
+    // Token detection must not fire on a JSON payload that merely contains the grant
+    // string — only the real form-urlencoded token POST is auto-answered.
+    [Fact]
+    public async Task Data_Post_Containing_The_Grant_String_Is_Not_Mistaken_For_A_Token_Request()
+    {
+        using var bc = new FakeBusinessCentral();
+        bc.EnqueueNoContent();
+
+        var payload = new TestPatchEntity { Id = "1", Name = "grant_type=client_credentials" };
+        await bc.Client.PostAsync("items", payload);
+
+        var request = Assert.Single(bc.Requests);
+        Assert.Equal("POST", request.Method);
+        Assert.Contains("grant_type=client_credentials", request.Body);
+        Assert.Equal(1, bc.TokenRequestCount);
+    }
+
     [Fact]
     public async Task Company_Segment_Encoding_Is_Assertable()
     {
