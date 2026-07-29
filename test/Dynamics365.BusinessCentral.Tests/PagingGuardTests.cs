@@ -62,8 +62,11 @@ public class PagingGuardTests
     {
         var (client, _) = Bounded();
 
-        client.Query<SalesOrder>().Top(0);
-        new QueryOptions().WithTop(0);
+        var query = client.Query<SalesOrder>().Top(0);
+        var options = new QueryOptions().WithTop(0);
+
+        Assert.NotNull(query);
+        Assert.Equal(0, options.Top);
     }
 
     #endregion

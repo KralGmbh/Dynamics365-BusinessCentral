@@ -24,6 +24,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     private readonly string _company;
 
     private const string BearerScheme = "Bearer";
+    private const string IfMatchHeader = "If-Match";
 
     /// <summary>Default page size used when auto-paging.</summary>
     private const int DefaultPageSize = 1000;
@@ -119,6 +120,45 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     }
 
     /// <inheritdoc />
+    public async Task<TEntity?> GetAsync<TEntity>(
+        string path,
+        string key,
+        IEnumerable<string>? select = null,
+        CancellationToken cancellationToken = default)
+    {
+        var url = _urlBuilder.BuildEntityUrl(path, key, select);
+
+        try
+        {
+            using var res = await SendWithAuthRetryAsync(
+                () => CreateJsonRequest(HttpMethod.Get, url), cancellationToken).ConfigureAwait(false);
+
+            return await DeserializeAsync<TEntity>(
+                res,
+                "Failed to deserialize Business Central response.",
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (BusinessCentralNotFoundException)
+        {
+            // "Does this entity exist" is a question, not an error.
+            return default;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<TEntity?> FirstOrDefaultAsync<TEntity>(
+        string path,
+        ODataFilter? filter = null,
+        IEnumerable<string>? select = null,
+        CancellationToken cancellationToken = default)
+    {
+        var page = await QueryAsync<TEntity>(path, filter, o => o.WithTop(1), select, cancellationToken)
+            .ConfigureAwait(false);
+
+        return page.Count == 0 ? default : page[0];
+    }
+
+    /// <inheritdoc />
     public Task<List<TEntity>> QueryAsync<TEntity>(
         string path,
         ODataFilter? filter = null,
@@ -192,13 +232,16 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         var baseOptions = new QueryOptions();
         options?.Invoke(baseOptions);
 
+        // Top is a result cap, exactly as documented on WithTop; PageSize sizes the round
+        // trips. This mirrors BusinessCentralQuery<T>.StreamAsync — the two implementations
+        // must stay in agreement.
+        var limit = baseOptions.Top;
+
         // $top=0 is a request for no rows at all.
-        if (baseOptions.Top == 0)
+        if (limit == 0)
             yield break;
 
-        // Top has historically doubled as the page size here; PageSize now says it plainly
-        // and wins when both are set.
-        var pageSize = baseOptions.PageSize ?? baseOptions.Top ?? DefaultPageSize;
+        var pageSize = baseOptions.PageSize ?? DefaultPageSize;
 
         // Guards the loop below: with a non-positive page size the "short page" termination
         // check can never fire, so it would request the same empty page forever. The public
@@ -211,9 +254,12 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         // Honour a caller-supplied $skip as the starting offset instead of silently
         // restarting from the first page.
         var skip = baseOptions.Skip ?? 0;
+        var emitted = 0;
+
+        var requested = NextTop(pageSize, limit, emitted);
 
         var page = await FetchPageAsync<TEntity>(
-                path, filterValue, PageOptions(baseOptions, pageSize, skip), select, cancellationToken)
+                path, filterValue, PageOptions(baseOptions, requested, skip), select, cancellationToken)
             .ConfigureAwait(false);
 
         var serverDriven = false;
@@ -225,7 +271,12 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             foreach (var entity in page.Value)
             {
                 yield return entity;
+
+                emitted++;
                 inPage++;
+
+                if (limit is { } cap && emitted >= cap)
+                    yield break;
             }
 
             // Server-driven paging wins: when Business Central sends @odata.nextLink it
@@ -234,7 +285,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             {
                 serverDriven = true;
 
-                page = await FetchNextPageAsync<TEntity>(page.NextLink!, cancellationToken)
+                page = await FetchNextPageAsync<TEntity>(page.NextLink, cancellationToken)
                     .ConfigureAwait(false);
 
                 continue;
@@ -244,22 +295,33 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
                 yield break;
 
             // No nextLink and a short page means the collection is exhausted.
-            if (inPage < pageSize)
+            if (inPage < requested)
                 yield break;
 
             skip += inPage;
+            requested = NextTop(pageSize, limit, emitted);
 
             page = await FetchPageAsync<TEntity>(
-                    path, filterValue, PageOptions(baseOptions, pageSize, skip), select, cancellationToken)
+                    path, filterValue, PageOptions(baseOptions, requested, skip), select, cancellationToken)
                 .ConfigureAwait(false);
         }
     }
 
-    private static QueryOptions PageOptions(QueryOptions baseOptions, int pageSize, int skip)
+    /// <summary>Page size for the next request, never overshooting a caller-set <c>$top</c>.</summary>
+    private static int NextTop(int pageSize, int? limit, int emitted)
+    {
+        if (limit is not { } cap)
+            return pageSize;
+
+        var remaining = cap - emitted;
+        return remaining < pageSize ? remaining : pageSize;
+    }
+
+    private static QueryOptions PageOptions(QueryOptions baseOptions, int top, int skip)
     {
         var options = new QueryOptions
         {
-            Top = pageSize,
+            Top = top,
             Skip = skip,
             IncludeCount = baseOptions.IncludeCount
         };
@@ -348,7 +410,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             () =>
             {
                 var req = CreateJsonRequest(HttpMethod.Patch, url, payload);
-                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.Headers.TryAddWithoutValidation(IfMatchHeader, ifMatch);
                 req.AddReturnRepresentationPreference();
                 return req;
             },
@@ -417,7 +479,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             () =>
             {
                 var req = CreateJsonRequest(HttpMethod.Patch, url, payload);
-                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.Headers.TryAddWithoutValidation(IfMatchHeader, ifMatch);
                 req.AddReturnRepresentationPreference();
                 return req;
             },
@@ -442,7 +504,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             () =>
             {
                 var req = CreateJsonRequest(HttpMethod.Put, url, payload);
-                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.Headers.TryAddWithoutValidation(IfMatchHeader, ifMatch);
                 req.AddReturnRepresentationPreference();
                 return req;
             },
@@ -467,7 +529,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             () =>
             {
                 var req = CreateJsonRequest(HttpMethod.Put, url, payload);
-                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.Headers.TryAddWithoutValidation(IfMatchHeader, ifMatch);
                 req.AddReturnRepresentationPreference();
                 return req;
             },
@@ -490,7 +552,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             () =>
             {
                 var req = CreateJsonRequest(HttpMethod.Delete, url);
-                req.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+                req.Headers.TryAddWithoutValidation(IfMatchHeader, ifMatch);
                 return req;
             },
             cancellationToken).ConfigureAwait(false);
@@ -601,7 +663,63 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
 
                 var stopwatch = Stopwatch.StartNew();
 
-                var res = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                HttpResponseMessage res;
+
+                try
+                {
+                    res = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (IsNetworkFailure(ex, cancellationToken))
+                {
+                    stopwatch.Stop();
+
+                    // No response was received, so there is no status code to map; wrap so
+                    // the caller still only has BusinessCentralException to catch. Whether
+                    // the request reached the server is as ambiguous as a 502/504, so the
+                    // same replay rules apply (IsSafeToReplay holds a POST back).
+                    var failure = new BusinessCentralConnectionException(
+                        NetworkFailureMessage(ex), method.Method, url, ex);
+
+                    _observer.OnRequestFailed(new BusinessCentralErrorInfo
+                    {
+                        Method = method.Method,
+                        Url = url,
+                        Duration = stopwatch.Elapsed,
+                        Exception = failure
+                    });
+
+                    if (transientAttempt + 1 < maxAttempts &&
+                        IsSafeToReplay(failure, method, retry))
+                    {
+                        transientAttempt++;
+
+                        var delay = ComputeDelay(retry, null, transientAttempt);
+
+                        _observer.OnRequestRetrying(new BusinessCentralRetryInfo
+                        {
+                            Method = method.Method,
+                            Url = url,
+                            Attempt = transientAttempt,
+                            Delay = delay,
+                            FromRetryAfter = false
+                        });
+
+                        request.Dispose();
+
+                        if (delay > TimeSpan.Zero)
+                            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+
+                        request = createRequest();
+                        continue;
+                    }
+
+                    failureReported = true;
+
+                    request.Dispose();
+
+                    throw failure;
+                }
+
                 res.RequestMessage ??= request;
 
                 stopwatch.Stop();
@@ -724,6 +842,20 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     }
 
     /// <summary>
+    /// Whether the send failed without any response arriving: a connection-level error, or
+    /// the <see cref="HttpClient"/> timeout. A cancellation requested through the caller's
+    /// token is not a network failure and propagates as-is.
+    /// </summary>
+    private static bool IsNetworkFailure(Exception ex, CancellationToken cancellationToken) =>
+        ex is HttpRequestException ||
+        (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested);
+
+    private static string NetworkFailureMessage(Exception ex) =>
+        ex is TaskCanceledException
+            ? "The request timed out before Business Central responded."
+            : $"The connection to Business Central failed: {ex.Message}";
+
+    /// <summary>
     /// Whether this failure may be retried by replaying the same request.
     /// </summary>
     /// <remarks>
@@ -792,8 +924,13 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     private static TimeSpan Floor(TimeSpan value) =>
         value < TimeSpan.Zero ? TimeSpan.Zero : value;
 
-    private static TimeSpan Clamp(TimeSpan value, TimeSpan max) =>
-        value < TimeSpan.Zero ? TimeSpan.Zero : value > max ? max : value;
+    private static TimeSpan Clamp(TimeSpan value, TimeSpan max)
+    {
+        if (value < TimeSpan.Zero)
+            return TimeSpan.Zero;
+
+        return value > max ? max : value;
+    }
 
     private static async Task<string?> ReadBodySafeAsync(
         HttpResponseMessage res,

@@ -14,10 +14,10 @@ namespace Dynamics365.BusinessCentral;
 public static class ServiceCollectionExtensions
 {
     /// <summary>Name of the internal HttpClient used for token acquisition.</summary>
-    internal const string TokenHttpClientName = "Dynamics365.BusinessCentral.Token";
+    internal const string TokenHttpClientName = BusinessCentralHttpClients.Token;
 
     /// <summary>Name of the HttpClient used for data requests.</summary>
-    internal const string ClientHttpClientName = "Dynamics365.BusinessCentral.Client";
+    internal const string ClientHttpClientName = BusinessCentralHttpClients.Client;
 
     /// <summary>
     /// Registers <see cref="IBusinessCentralClient"/> configured in code.
