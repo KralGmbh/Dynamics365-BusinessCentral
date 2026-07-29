@@ -54,10 +54,19 @@ internal static class RetryHelper
     /// </remarks>
     private static TimeSpan AddJitter(TimeSpan delay, double factor, TimeSpan max)
     {
-        if (factor <= 0 || delay <= TimeSpan.Zero)
+        // JitterFactor is public input that may arrive via configuration binding — a NaN
+        // never compares true, so it must be rejected explicitly or it slips past <= 0.
+        if (double.IsNaN(factor) || factor <= 0 || delay <= TimeSpan.Zero)
             return delay;
 
         var extra = delay.TotalMilliseconds * factor * Random.Shared.NextDouble();
+
+        // A huge or infinite factor overflows `extra` to Infinity — or to NaN when the
+        // random draw is exactly 0 — and TimeSpan.FromMilliseconds throws on both. The
+        // jittered delay can never exceed MaxDelay anyway, so compare in double space
+        // first, same as the backoff overflow guard in ComputeDelay.
+        if (double.IsNaN(extra) || delay.TotalMilliseconds + extra >= max.TotalMilliseconds)
+            return max;
 
         return Clamp(delay + TimeSpan.FromMilliseconds(extra), max);
     }
