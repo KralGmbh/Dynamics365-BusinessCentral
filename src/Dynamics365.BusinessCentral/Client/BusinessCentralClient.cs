@@ -602,7 +602,63 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
 
                 var stopwatch = Stopwatch.StartNew();
 
-                var res = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                HttpResponseMessage res;
+
+                try
+                {
+                    res = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (IsNetworkFailure(ex, cancellationToken))
+                {
+                    stopwatch.Stop();
+
+                    // No response was received, so there is no status code to map; wrap so
+                    // the caller still only has BusinessCentralException to catch. Whether
+                    // the request reached the server is as ambiguous as a 502/504, so the
+                    // same replay rules apply (IsSafeToReplay holds a POST back).
+                    var failure = new BusinessCentralConnectionException(
+                        NetworkFailureMessage(ex), method.Method, url, ex);
+
+                    _observer.OnRequestFailed(new BusinessCentralErrorInfo
+                    {
+                        Method = method.Method,
+                        Url = url,
+                        Duration = stopwatch.Elapsed,
+                        Exception = failure
+                    });
+
+                    if (transientAttempt + 1 < maxAttempts &&
+                        IsSafeToReplay(failure, method, retry))
+                    {
+                        transientAttempt++;
+
+                        var delay = ComputeDelay(retry, null, transientAttempt);
+
+                        _observer.OnRequestRetrying(new BusinessCentralRetryInfo
+                        {
+                            Method = method.Method,
+                            Url = url,
+                            Attempt = transientAttempt,
+                            Delay = delay,
+                            FromRetryAfter = false
+                        });
+
+                        request.Dispose();
+
+                        if (delay > TimeSpan.Zero)
+                            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+
+                        request = createRequest();
+                        continue;
+                    }
+
+                    failureReported = true;
+
+                    request.Dispose();
+
+                    throw failure;
+                }
+
                 res.RequestMessage ??= request;
 
                 stopwatch.Stop();
@@ -723,6 +779,20 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
 
         return createRequest();
     }
+
+    /// <summary>
+    /// Whether the send failed without any response arriving: a connection-level error, or
+    /// the <see cref="HttpClient"/> timeout. A cancellation requested through the caller's
+    /// token is not a network failure and propagates as-is.
+    /// </summary>
+    private static bool IsNetworkFailure(Exception ex, CancellationToken cancellationToken) =>
+        ex is HttpRequestException ||
+        (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested);
+
+    private static string NetworkFailureMessage(Exception ex) =>
+        ex is TaskCanceledException
+            ? "The request timed out before Business Central responded."
+            : $"The connection to Business Central failed: {ex.Message}";
 
     /// <summary>
     /// Whether this failure may be retried by replaying the same request.

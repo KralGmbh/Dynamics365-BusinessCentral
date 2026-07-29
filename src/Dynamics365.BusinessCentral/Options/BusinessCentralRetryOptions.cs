@@ -2,7 +2,8 @@ namespace Dynamics365.BusinessCentral.Options;
 
 /// <summary>
 /// Controls how the client retries throttled (<c>429</c>) and transient (<c>408</c>,
-/// <c>502</c>, <c>503</c>, <c>504</c>) responses.
+/// <c>502</c>, <c>503</c>, <c>504</c>) responses, as well as connection-level failures
+/// and client-side timeouts where no response arrived at all.
 /// </summary>
 /// <remarks>
 /// Business Central throttles aggressively and answers with a <c>Retry-After</c> header;
@@ -46,7 +47,9 @@ public sealed class BusinessCentralRetryOptions
     /// have applied the write before the failure surfaced. Replaying a <c>POST</c> would then
     /// create a duplicate record, so by default it is not retried and the exception is raised
     /// for the caller to handle. Idempotent methods — <c>GET</c>, <c>PUT</c>, <c>DELETE</c> —
-    /// are always retried, because replaying them converges on the same state.
+    /// are always retried, because replaying them converges on the same state. Connection
+    /// failures and client-side timeouts are equally ambiguous — the request may have reached
+    /// the server even though no response arrived — and follow the same rules.
     /// </para>
     /// <para>
     /// Set this to <see langword="true"/> only when the endpoint you POST to deduplicates

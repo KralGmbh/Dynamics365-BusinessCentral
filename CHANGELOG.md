@@ -7,6 +7,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`BusinessCentralConnectionException`.** Connection-level failures and client-side
+  timeouts — where no response was received at all — now surface as a
+  `BusinessCentralException` subtype (`StatusCode` is `0`) instead of escaping as raw
+  `HttpRequestException`/`TaskCanceledException`, so `catch (BusinessCentralException)`
+  sees every failure the client produces. The original exception is preserved as
+  `InnerException`. Cancellation via the caller's own token still throws
+  `OperationCanceledException`, unwrapped.
+
+### Changed
+
+- **Network failures are retried.** Connection failures and client-side timeouts now go
+  through the transient-retry budget under the same replay rules as `408`/`502`/`503`/`504`:
+  idempotent methods are replayed, `POST` is held back unless
+  `Retry.RetryPostOnTransientFailures` is set. Previously they bypassed retry entirely and
+  failed on the first attempt.
+
+### Fixed
+
+- **`DateOnly` and `TimeOnly` filter values produce valid OData literals**
+  (`2026-07-29`, `13:45:30.0000000`). They previously fell through to a culture-formatted
+  string such as `07/29/2026`, which Business Central rejects — notably breaking filters
+  on date fields like `postingDate`.
+
 ## [2.0.0-alpha] - 2026-07-28
 
 **Prerelease.** Published for validation against real Business Central environments before

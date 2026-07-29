@@ -146,6 +146,11 @@ public static class Filter
             string s => $"'{s.Replace("'", "''")}'",
             DateTime dt => dt.ToUniversalTime().ToString("O"),
             DateTimeOffset dto => dto.ToUniversalTime().ToString("O"),
+            // Edm.Date / Edm.TimeOfDay literals. Without these both fall through to
+            // Convert.ToString, whose culture-formatted output ("07/29/2026") Business
+            // Central rejects.
+            DateOnly d => d.ToString("O", CultureInfo.InvariantCulture),
+            TimeOnly t => t.ToString("O", CultureInfo.InvariantCulture),
             bool b => b.ToString().ToLowerInvariant(),
             Guid g => g.ToString(),
             Enum e => $"'{e}'",

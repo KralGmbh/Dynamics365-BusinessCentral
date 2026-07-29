@@ -81,6 +81,15 @@ always safe; the others are ambiguous, so a `POST` is *not* retried on them:
 | `PATCH` | retried | retried — this client sends absolute values, so replay converges |
 | `POST` | retried | **not** retried |
 
+Connection-level failures — a reset connection, a DNS error, the `HttpClient` timeout —
+follow the same rules as the ambiguous statuses: idempotent methods are retried, `POST` is
+not. They also now surface as `BusinessCentralConnectionException` (`StatusCode` is `0` —
+no response was received) instead of a raw `HttpRequestException` or
+`TaskCanceledException`. **A `catch (HttpRequestException)` around client calls no longer
+fires**; catch `BusinessCentralConnectionException` or the base type, and find the original
+exception on `InnerException`. Cancelling through your own `CancellationToken` still throws
+`OperationCanceledException`, unwrapped.
+
 If you already have an outer retry policy (Polly, Wolverine, a message broker), the two now
 compose multiplicatively. Consider lowering `Retry.MaxAttempts`, or disabling it:
 

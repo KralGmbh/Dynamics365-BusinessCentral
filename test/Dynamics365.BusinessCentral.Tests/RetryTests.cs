@@ -334,6 +334,146 @@ public class RetryTests
         Assert.Equal(3, patches);
     }
 
+    #region Network failures
+
+    // No response at all — connection reset, DNS failure, client-side timeout — is as
+    // ambiguous as a 502/504: the request may have reached the server. Idempotent methods
+    // are retried; failures surface as BusinessCentralConnectionException so the
+    // "everything derives from BusinessCentralException" contract holds.
+    [Fact]
+    public async Task Get_Is_Retried_On_Connection_Failure()
+    {
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+        {
+            dataCalls++;
+
+            if (dataCalls == 1)
+                throw new HttpRequestException("connection reset");
+
+            return TestBase.Json("{\"value\":[]}");
+        }));
+
+        var result = await client.QueryAsync<TestEntity>("orders", "true");
+
+        Assert.Empty(result);
+        Assert.Equal(2, dataCalls);
+    }
+
+    [Fact]
+    public async Task Connection_Failure_Surfaces_As_ConnectionException_After_MaxAttempts()
+    {
+        var observer = new RecordingObserver();
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(
+            TestBase.WithToken(_ =>
+            {
+                dataCalls++;
+                throw new HttpRequestException("connection reset");
+            }),
+            observer);
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralConnectionException>(() =>
+            client.QueryAsync<TestEntity>("orders", "true"));
+
+        Assert.Equal(3, dataCalls);
+        Assert.True(ex.IsTransient);
+        Assert.Equal(0, (int)ex.StatusCode);
+        Assert.IsType<HttpRequestException>(ex.InnerException);
+
+        Assert.Equal(2, observer.Retries.Count);
+        Assert.All(observer.Retries, r => Assert.Equal(0, r.StatusCode));
+    }
+
+    [Fact]
+    public async Task Client_Timeout_Is_Treated_As_Transient()
+    {
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+        {
+            dataCalls++;
+
+            // What HttpClient throws when its Timeout elapses: a TaskCanceledException
+            // while the caller's token is NOT cancelled.
+            if (dataCalls == 1)
+                throw new TaskCanceledException("timed out", new TimeoutException());
+
+            return TestBase.Json("{\"value\":[]}");
+        }));
+
+        var result = await client.QueryAsync<TestEntity>("orders", "true");
+
+        Assert.Empty(result);
+        Assert.Equal(2, dataCalls);
+    }
+
+    [Fact]
+    public async Task Post_Is_Not_Replayed_On_Connection_Failure()
+    {
+        var posts = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+        {
+            posts++;
+            throw new HttpRequestException("connection reset");
+        }));
+
+        await Assert.ThrowsAsync<BusinessCentralConnectionException>(() =>
+            client.PostAsync("ldatSummary", new TestPatchEntity()));
+
+        Assert.Equal(1, posts);
+    }
+
+    [Fact]
+    public async Task Post_Replay_On_Connection_Failure_Can_Be_Opted_Into()
+    {
+        var posts = 0;
+
+        var client = TestBase.CreateClient(
+            TestBase.WithToken(_ =>
+            {
+                posts++;
+                throw new HttpRequestException("connection reset");
+            }),
+            configure: o => o.Retry = new BusinessCentralRetryOptions
+            {
+                MaxAttempts = 3,
+                BaseDelay = TimeSpan.Zero,
+                MaxDelay = TimeSpan.Zero,
+                RetryPostOnTransientFailures = true
+            });
+
+        await Assert.ThrowsAsync<BusinessCentralConnectionException>(() =>
+            client.PostAsync("ldatSummary", new TestPatchEntity()));
+
+        Assert.Equal(3, posts);
+    }
+
+    // Cancellation requested by the caller must propagate as-is: no wrapping, no retry.
+    [Fact]
+    public async Task User_Cancellation_Is_Not_Wrapped_Or_Retried()
+    {
+        using var cts = new CancellationTokenSource();
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+        {
+            dataCalls++;
+            cts.Cancel();
+            throw new TaskCanceledException();
+        }));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            client.QueryAsync<TestEntity>("orders", "true", cancellationToken: cts.Token));
+
+        Assert.Equal(1, dataCalls);
+    }
+
+    #endregion
+
     #region Backoff bounds
 
     // A large BaseDelay with a high attempt count overflows TimeSpan, and

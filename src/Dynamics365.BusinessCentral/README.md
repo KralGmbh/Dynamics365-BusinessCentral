@@ -265,6 +265,10 @@ Without this, a `504` on a `POST` could duplicate a record that Business Central
 created. If your endpoint deduplicates server-side, or duplicates are acceptable, opt back
 in with `options.Retry.RetryPostOnTransientFailures = true`.
 
+Connection failures and client-side timeouts — no response received at all — are just as
+ambiguous as a `504` and follow the same column: idempotent methods are retried, `POST` is
+not. They surface as `BusinessCentralConnectionException`.
+
 # ⚠️ Errors
 
 All failures derive from `BusinessCentralException`. `Message` is a single line suitable
@@ -276,6 +280,7 @@ for logging; the detail lives on properties, and `ToString()` renders everything
 | `BusinessCentralAuthException` | `401`, `403` |
 | `BusinessCentralNotFoundException` | `404` |
 | `BusinessCentralThrottledException` | `429` |
+| `BusinessCentralConnectionException` | no response — connection failure or client-side timeout; `StatusCode` is `0` |
 | `BusinessCentralServerException` | everything else, and deserialization failures |
 
 ```csharp
