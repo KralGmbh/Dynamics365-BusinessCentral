@@ -7,7 +7,7 @@
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>2.0.0-alpha</Version>
+        <Version>2.0.0-alpha.2</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
 
@@ -35,12 +35,16 @@
         <!-- Shown on the nuget.org package page. Kept short and pointed at CHANGELOG.md
              rather than duplicated, since nuget.org renders this as plain text. -->
         <PackageReleaseNotes>
-            PRERELEASE — 2.0.0-alpha is published for validation against real Business
-            Central environments. Not recommended for production until 2.0.0 stable.
+            PRERELEASE — 2.0.0-alpha.2 is the release candidate for 2.0.0 stable, published
+            for validation against real Business Central environments.
 
-            2.0.0 fixes six defects and reworks the API: typed queries via client.Query&lt;T&gt;(),
-            Retry-After aware throttling handling, streaming, $expand/$count, multi-company
-            support, and XML docs now shipped in the package.
+            On top of 2.0.0-alpha: date/time filter literals fixed (DateOnly, TimeOnly,
+            kindless DateTime), network failures retried and surfaced as
+            BusinessCentralConnectionException, WithTop honoured as a result cap when
+            auto-paging, single-entity GetAsync/FirstOrDefaultAsync, default interface
+            methods so test fakes keep compiling, public HttpClient names for resilience
+            composition, exception predicates (IsNotFound etc.), and typed field-name
+            resolution for the path-based API.
 
             Breaking changes — see the migration guide before upgrading:
             https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/MIGRATION.md
