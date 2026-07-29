@@ -20,7 +20,7 @@ internal static class HttpRequestExtensions
         request.Headers.Accept.Add(
             new MediaTypeWithQualityHeaderValue("application/json"));
 
-        if (!request.Headers.UserAgent.Any())
+        if (request.Headers.UserAgent.Count == 0)
             request.Headers.UserAgent.ParseAdd(UserAgent);
     }
 

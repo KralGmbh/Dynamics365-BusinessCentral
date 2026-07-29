@@ -44,6 +44,28 @@ public abstract class BusinessCentralException : Exception
     /// </summary>
     public virtual bool IsTransient => false;
 
+    /// <summary>The entity or entity set does not exist (<c>404</c>).</summary>
+    /// <remarks>
+    /// The exception subtypes are sealed siblings, so
+    /// <c>catch (BusinessCentralServerException ex) when (ex.StatusCode == HttpStatusCode.NotFound)</c>
+    /// can never match — the 404 is a <see cref="BusinessCentralNotFoundException"/>. These
+    /// predicates make the safe form the obvious one:
+    /// <c>catch (BusinessCentralException ex) when (ex.IsNotFound)</c>.
+    /// </remarks>
+    public bool IsNotFound => StatusCode == HttpStatusCode.NotFound;
+
+    /// <summary>The request was throttled (<c>429</c>).</summary>
+    public bool IsThrottled => StatusCode == HttpStatusCode.TooManyRequests;
+
+    /// <summary>Business Central rejected the request as invalid (<c>400</c>).</summary>
+    public bool IsValidation => StatusCode == HttpStatusCode.BadRequest;
+
+    /// <summary>Authentication or authorisation failed (<c>401</c> / <c>403</c>).</summary>
+    public bool IsAuth => StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
+
+    /// <summary>No response was received: connection failure or client-side timeout.</summary>
+    public bool IsConnectionFailure => StatusCode == 0;
+
     /// <summary>Creates a new <see cref="BusinessCentralException"/>.</summary>
     /// <param name="message">Short, single-line description of the failure.</param>
     /// <param name="statusCode">HTTP status code returned by Business Central.</param>
@@ -82,7 +104,10 @@ public abstract class BusinessCentralException : Exception
             ? $"Business Central request failed."
             : message.Trim().ReplaceLineEndings(" ");
 
-        return $"{trimmed} ({method} → HTTP {(int)status} {status})";
+        // Status 0 means no response was ever received (connection failure or timeout).
+        return status == 0
+            ? $"{trimmed} ({method} → no response)"
+            : $"{trimmed} ({method} → HTTP {(int)status} {status})";
     }
 
     /// <summary>
@@ -95,7 +120,9 @@ public abstract class BusinessCentralException : Exception
 
         sb.AppendLine();
         sb.AppendLine("--- Business Central details ---");
-        sb.AppendLine($"Status: {(int)StatusCode} {StatusCode}");
+        sb.AppendLine(StatusCode == 0
+            ? "Status: (no response received)"
+            : $"Status: {(int)StatusCode} {StatusCode}");
         sb.AppendLine($"Method: {Method}");
         sb.AppendLine($"URL: {RequestUrl}");
 
@@ -183,6 +210,37 @@ public sealed class BusinessCentralThrottledException : BusinessCentralException
         string? correlationId = null,
         Exception? inner = null)
         : base(message, code, method, url, body, odataErrorCode, correlationId, inner) { }
+
+    /// <inheritdoc />
+    public override bool IsTransient => true;
+}
+
+/// <summary>
+/// No HTTP response was received: the connection failed or the request timed out
+/// client-side before Business Central answered. Always transient.
+/// <see cref="BusinessCentralException.StatusCode"/> is <c>0</c>, because without a
+/// response there is no status code.
+/// </summary>
+/// <remarks>
+/// The underlying <see cref="HttpRequestException"/> or timeout is preserved as
+/// <see cref="Exception.InnerException"/>. Like the ambiguous transient statuses, the
+/// request may have reached the server even though the response never arrived, so
+/// idempotent methods are replayed but a <c>POST</c> is not. Cancellation through the
+/// caller's own <see cref="CancellationToken"/> is never wrapped in this type.
+/// </remarks>
+public sealed class BusinessCentralConnectionException : BusinessCentralException
+{
+    /// <summary>Creates a new <see cref="BusinessCentralConnectionException"/>.</summary>
+    /// <param name="message">Short, single-line description of the failure.</param>
+    /// <param name="method">HTTP method of the failed request.</param>
+    /// <param name="requestUrl">URL of the failed request.</param>
+    /// <param name="inner">The underlying connection or timeout exception.</param>
+    public BusinessCentralConnectionException(
+        string message,
+        string method,
+        string? requestUrl,
+        Exception inner)
+        : base(message, 0, method, requestUrl, null, null, null, inner) { }
 
     /// <inheritdoc />
     public override bool IsTransient => true;

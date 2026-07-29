@@ -7,6 +7,60 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Default implementations on every `IBusinessCentralClient` member.** Hand-written test
+  fakes now implement only the members they exercise; everything else throws
+  `NotSupportedException` naming the member. Interface growth no longer breaks consumer
+  builds. `FirstOrDefaultAsync` composes over `QueryAsync`, so fakes get it for free.
+- **Single-entity reads on the path-based API.** `GetAsync<T>(path, key, select?)` fetches
+  by systemId or alternate key and returns `null` on `404` — "does it exist" is a question,
+  not an error. `FirstOrDefaultAsync<T>(path, filter?, select?)` sends `$top=1`.
+- **`BusinessCentralHttpClients`** exposes the package's two `IHttpClientFactory` client
+  names, so a global resilience handler (e.g. Aspire's `AddStandardResilienceHandler`) can
+  exempt them instead of double-retrying — the README's *"Composing with an existing
+  resilience pipeline"* section shows how.
+- **Predicate properties on `BusinessCentralException`**: `IsNotFound`, `IsThrottled`,
+  `IsValidation`, `IsAuth`, `IsConnectionFailure`. The subtypes are sealed siblings, so
+  `catch (BusinessCentralServerException ex) when (ex.StatusCode == NotFound)` compiles but
+  never matches; `when (ex.IsNotFound)` is the supported form.
+- **`BusinessCentralField.Of<T>(selector)`** resolves a property selector to its wire name
+  (`[JsonPropertyName]` first, then the camelCase policy), and **`EntityPath` is now
+  public** — path-based consumers can delete hand-maintained field/path constants.
+
+- **`BusinessCentralConnectionException`.** Connection-level failures and client-side
+  timeouts — where no response was received at all — now surface as a
+  `BusinessCentralException` subtype (`StatusCode` is `0`) instead of escaping as raw
+  `HttpRequestException`/`TaskCanceledException`, so `catch (BusinessCentralException)`
+  sees every failure the client produces. The original exception is preserved as
+  `InnerException`. Cancellation via the caller's own token still throws
+  `OperationCanceledException`, unwrapped.
+
+### Changed
+
+- **Network failures are retried.** Connection failures and client-side timeouts now go
+  through the transient-retry budget under the same replay rules as `408`/`502`/`503`/`504`:
+  idempotent methods are replayed, `POST` is held back unless
+  `Retry.RetryPostOnTransientFailures` is set. Previously they bypassed retry entirely and
+  failed on the first attempt.
+
+### Fixed
+
+- **`WithTop` is a result cap in `QueryAllAsync`/`QueryStreamAsync`**, matching its own
+  documentation and the fluent builder's `Top()`. It was previously repurposed as the page
+  size — `WithTop(10)` returned the entire collection in pages of 10 — and was silently
+  ignored outright when `WithPageSize` was also set. Requests never overshoot the cap
+  (`$top` shrinks to what is still wanted). Use `WithPageSize` to size round trips.
+- **Kindless `DateTime` filter values are no longer shifted by the machine's timezone.**
+  `DateTimeKind.Unspecified` — the kind of anything parsed from config or loaded from a
+  database — was run through `ToUniversalTime()`, which assumes local time, so the same
+  filter matched different rows depending on where the code ran. Unspecified is now taken
+  to already be UTC. `Utc` and `Local` values are unaffected.
+- **`DateOnly` and `TimeOnly` filter values produce valid OData literals**
+  (`2026-07-29`, `13:45:30.0000000`). They previously fell through to a culture-formatted
+  string such as `07/29/2026`, which Business Central rejects — notably breaking filters
+  on date fields like `postingDate`.
+
 ## [2.0.0-alpha] - 2026-07-28
 
 **Prerelease.** Published for validation against real Business Central environments before

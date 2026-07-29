@@ -13,9 +13,11 @@ so read that section even if the build is green.
 New members: `Company`, `ForCompany`, `Query<T>()` (two overloads), `QueryStreamAsync<T>`,
 `GetCompaniesAsync`, and two-generic `PostAsync`/`PatchAsync`/`PutAsync`.
 
-Mocking libraries (Moq, NSubstitute, FakeItEasy) absorb this automatically. **A
-hand-written test fake implementing the interface will not compile** until the new members
-are added.
+Mocking libraries (Moq, NSubstitute, FakeItEasy) absorb this automatically. Hand-written
+test fakes keep compiling too: **every interface member has a default implementation**, so
+a fake only implements the members it actually exercises. An unimplemented member throws
+`NotSupportedException` naming itself, and `FirstOrDefaultAsync` composes over `QueryAsync`
+so fakes get it for free.
 
 ### Nothing else, in practice
 
@@ -64,7 +66,9 @@ catch (BusinessCentralException ex) { … }          // sees everything
 > did: `BusinessCentralServerException` never caught `400`, `401`, `403` or `404` either —
 > those are `Validation`, `Auth`, `Auth` and `NotFound`, all sealed siblings. A guard like
 > `catch (BusinessCentralServerException ex) when (ex.StatusCode == HttpStatusCode.NotFound)`
-> can never match. Catch `BusinessCentralNotFoundException`, or the base type.
+> can never match. Catch `BusinessCentralNotFoundException`, or use the predicates on the
+> base type — `catch (BusinessCentralException ex) when (ex.IsNotFound)` — which exist
+> precisely because this trap compiles.
 
 ### Transient failures are retried automatically
 
@@ -81,11 +85,23 @@ always safe; the others are ambiguous, so a `POST` is *not* retried on them:
 | `PATCH` | retried | retried — this client sends absolute values, so replay converges |
 | `POST` | retried | **not** retried |
 
+Connection-level failures — a reset connection, a DNS error, the `HttpClient` timeout —
+follow the same rules as the ambiguous statuses: idempotent methods are retried, `POST` is
+not. They also now surface as `BusinessCentralConnectionException` (`StatusCode` is `0` —
+no response was received) instead of a raw `HttpRequestException` or
+`TaskCanceledException`. **A `catch (HttpRequestException)` around client calls no longer
+fires**; catch `BusinessCentralConnectionException` or the base type, and find the original
+exception on `InnerException`. Cancelling through your own `CancellationToken` still throws
+`OperationCanceledException`, unwrapped.
+
 If you already have an outer retry policy (Polly, Wolverine, a message broker), the two now
-compose multiplicatively. Consider lowering `Retry.MaxAttempts`, or disabling it:
+compose multiplicatively. The package's HTTP clients are addressable by name
+(`BusinessCentralHttpClients.Client` / `.Token`), so the preferred fix is exempting them
+from the outer handler and keeping this retry — see the README section *"Composing with an
+existing resilience pipeline"*. Alternatively, lower `Retry.MaxAttempts` or disable it:
 
 ```csharp
-options.Retry.Enabled = false;   // 1.0 behaviour
+options.Retry.Enabled = false;   // 1.0 behaviour — but a generic outer handler replays POST
 ```
 
 ### `QueryAllAsync` may return more rows than before
@@ -93,6 +109,21 @@ options.Retry.Enabled = false;   // 1.0 behaviour
 It now follows `@odata.nextLink`. Where Business Central applied a server-side page cap
 below the requested `$top`, 1.0 stopped early and silently truncated. Reconciliation logic
 that assumed the old result size should be re-checked.
+
+### `QueryAllAsync` with `WithTop` may return far fewer rows
+
+The opposite direction: `WithTop(n)` was 1.0's page size and did not limit results; it is
+now a result cap, as documented. A call like `QueryAllAsync(..., o => o.WithTop(500))`
+that used to fetch *everything* in pages of 500 now returns at most 500 rows. Replace it
+with `WithPageSize(500)` to keep the old behaviour — see §3.
+
+### Kindless `DateTime` filters are no longer shifted by the machine's timezone
+
+1.0 passed every `DateTime` through `ToUniversalTime()`, which treats
+`DateTimeKind.Unspecified` — anything parsed from config or loaded from a database — as
+*local* time. The same filter matched different rows depending on the server's timezone.
+2.0 takes Unspecified as already UTC. If you relied on the local-time interpretation,
+apply `DateTime.SpecifyKind(value, DateTimeKind.Local)` before filtering.
 
 ### `Exception.Message` is now a single line
 
@@ -124,9 +155,15 @@ If you built workarounds for either, remove them.
 
 ### `WithTop` vs `WithPageSize`
 
-In `QueryAllAsync`, `WithTop(n)` meant *page size*, not a result limit. `WithPageSize(n)`
-now says that explicitly. `WithTop` still works there (`PageSize ?? Top ?? 1000`), but
-prefer the clearer name.
+In 1.0's `QueryAllAsync`, `WithTop(n)` meant *page size*, not a result limit — it paged
+through the entire collection `n` rows at a time. In 2.0 `WithTop` is what it says: a
+result cap, everywhere. `QueryAllAsync(..., o => o.WithTop(10))` now returns at most 10
+rows. Use `WithPageSize(n)` for the old meaning:
+
+```csharp
+// 1.0: WithTop(500) fetched everything, 500 rows per round trip. 2.0 equivalent:
+await client.QueryAllAsync<SalesOrder>("salesOrders", options: o => o.WithPageSize(500));
+```
 
 ### Chained ordering
 
@@ -226,10 +263,13 @@ There is no deprecation on the path-based API; migrate at your own pace, or not 
 
 ## 5. Checklist
 
-- [ ] Update hand-written `IBusinessCentralClient` fakes, if any
+- [ ] Hand-written `IBusinessCentralClient` fakes keep compiling (default interface
+      methods); implement any newly-exercised member, delete `NotSupportedException` stubs
 - [ ] Audit `catch (BusinessCentralServerException)` — it does not see `400`/`401`/`403`/`404`/`429`
 - [ ] Decide on retry: keep it, tune `MaxAttempts`, or `Retry.Enabled = false`
 - [ ] Re-check any logic that assumed a `204` write failed
 - [ ] Re-check result-size assumptions around `QueryAllAsync`
+- [ ] Replace `WithTop` used as a page size with `WithPageSize`
+- [ ] Check `DateTime` filter values for `Kind=Unspecified` semantics (now read as UTC)
 - [ ] Replace `dynamic` writes with the two-generic overloads
 - [ ] Optionally simplify configuration and drop hand-built `BaseUrl`

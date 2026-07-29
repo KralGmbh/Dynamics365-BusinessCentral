@@ -11,7 +11,10 @@ public sealed class BusinessCentralRetryInfo
     /// <summary>URL of the request being retried.</summary>
     public string Url { get; init; } = string.Empty;
 
-    /// <summary>Status code that triggered the retry.</summary>
+    /// <summary>
+    /// Status code that triggered the retry, or <c>0</c> when no response was received
+    /// (connection failure or client-side timeout).
+    /// </summary>
     public int StatusCode { get; init; }
 
     /// <summary>1-based retry number: <c>1</c> is the first retry after the original attempt.</summary>

@@ -2070,10 +2070,151 @@ public partial class ClientTests
             };
         });
 
-        var result = await client.QueryAllAsync<TestEntity>("orders", options: o => o.WithTop(2));
+        var result = await client.QueryAllAsync<TestEntity>("orders", options: o => o.WithPageSize(2));
 
         Assert.Equal(5, result.Count);
         Assert.Equal(3, dataCalls);
+    }
+
+    // Top is a result cap here, exactly as its documentation says — the same contract as
+    // the fluent builder's Top(). It used to be silently repurposed as the page size.
+    [Fact]
+    public async Task QueryAll_Honours_Top_As_A_Result_Cap()
+    {
+        var dataCalls = 0;
+        var requests = new List<string>();
+
+        var client = TestBase.CreateClient(TestBase.WithToken(req =>
+        {
+            dataCalls++;
+            requests.Add(req.RequestUri!.ToString());
+
+            return TestBase.Json("{\"value\":[{\"id\":1},{\"id\":2}]}");
+        }));
+
+        var result = await client.QueryAllAsync<TestEntity>(
+            "orders", options: o => o.WithTop(3).WithPageSize(2));
+
+        Assert.Equal(3, result.Count);
+        Assert.Equal(2, dataCalls);
+
+        // The second request never overshoots the cap: only one row is still wanted.
+        Assert.Contains("$top=2", requests[0]);
+        Assert.Contains("$top=1", requests[1]);
+    }
+
+    [Fact]
+    public async Task QueryAll_Top_Alone_Stops_After_Top_Rows()
+    {
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+        {
+            dataCalls++;
+            return TestBase.Json("{\"value\":[{\"id\":1},{\"id\":2}]}");
+        }));
+
+        var result = await client.QueryAllAsync<TestEntity>("orders", options: o => o.WithTop(2));
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(1, dataCalls);
+    }
+
+    #endregion
+
+    #region Get Tests
+
+    [Fact]
+    public async Task Get_Builds_Key_Url_And_Deserializes_The_Entity()
+    {
+        string? capturedUrl = null;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(req =>
+        {
+            capturedUrl = req.RequestUri!.ToString();
+            return TestBase.Json("{\"id\":7,\"name\":\"pump\"}");
+        }));
+
+        var entity = await client.GetAsync<TestEntity>("orders", "7");
+
+        Assert.NotNull(entity);
+        Assert.Equal(7, entity.Id);
+        Assert.Equal("https://test/Company('Test')/orders(7)", capturedUrl);
+    }
+
+    [Fact]
+    public async Task Get_Appends_Select_And_Preserves_Alternate_Keys()
+    {
+        string? capturedUrl = null;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(req =>
+        {
+            capturedUrl = req.RequestUri!.ToString();
+            return TestBase.Json("{\"id\":7}");
+        }));
+
+        await client.GetAsync<TestEntity>("orders", "No='1000'", select: ["id", "name"]);
+
+        Assert.Equal("https://test/Company('Test')/orders(No='1000')?$select=id,name", capturedUrl);
+    }
+
+    // "Does this entity exist" is a question, not an error: 404 yields null. Anything
+    // else is still a real failure and throws.
+    [Fact]
+    public async Task Get_Returns_Null_On_404()
+    {
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+            new HttpResponseMessage(HttpStatusCode.NotFound)
+            {
+                Content = new StringContent("{\"error\":{\"code\":\"Not_Found\",\"message\":\"gone\"}}")
+            }));
+
+        var entity = await client.GetAsync<TestEntity>("orders", "7");
+
+        Assert.Null(entity);
+    }
+
+    [Fact]
+    public async Task Get_Still_Throws_On_Other_Failures()
+    {
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+            new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent("boom")
+            }));
+
+        await Assert.ThrowsAsync<BusinessCentralServerException>(() =>
+            client.GetAsync<TestEntity>("orders", "7"));
+    }
+
+    [Fact]
+    public async Task FirstOrDefault_Sends_Top_1_And_Returns_The_First_Row()
+    {
+        string? capturedUrl = null;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(req =>
+        {
+            capturedUrl = req.RequestUri!.ToString();
+            return TestBase.Json("{\"value\":[{\"id\":1},{\"id\":2}]}");
+        }));
+
+        var entity = await client.FirstOrDefaultAsync<TestEntity>(
+            "orders", Filter.Equals("status", "active"));
+
+        Assert.NotNull(entity);
+        Assert.Equal(1, entity.Id);
+        Assert.Contains("$top=1", capturedUrl);
+        Assert.Contains("$filter=", capturedUrl);
+    }
+
+    [Fact]
+    public async Task FirstOrDefault_Returns_Null_When_Nothing_Matches()
+    {
+        var client = TestBase.CreateClient(TestBase.WithToken(_ => TestBase.Json("{\"value\":[]}")));
+
+        var entity = await client.FirstOrDefaultAsync<TestEntity>("orders");
+
+        Assert.Null(entity);
     }
 
     #endregion

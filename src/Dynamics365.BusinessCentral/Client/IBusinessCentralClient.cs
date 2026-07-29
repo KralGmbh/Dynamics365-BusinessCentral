@@ -6,21 +6,37 @@ namespace Dynamics365.BusinessCentral.Client;
 /// Client abstraction for querying and modifying data in Microsoft Dynamics 365 Business Central via OData.
 /// </summary>
 /// <remarks>
+/// <para>
 /// <see cref="Query{TEntity}()"/> is the recommended entry point — it is strongly typed and
 /// covers filtering, ordering, projection, expansion, paging and counting. The
 /// <c>QueryAsync</c>/<c>PostAsync</c> family remains for direct, path-based access.
+/// </para>
+/// <para>
+/// Every member has a default implementation, so a hand-written test fake only implements
+/// the members it actually exercises — additions to this interface never break it. An
+/// unimplemented member throws <see cref="NotSupportedException"/> naming itself.
+/// <see cref="FirstOrDefaultAsync{TEntity}"/> composes over
+/// <see cref="QueryAsync{TEntity}(string, ODataFilter?, Action{QueryOptions}?, IEnumerable{string}?, CancellationToken)"/>,
+/// so a fake implementing that overload gets it for free.
+/// </para>
 /// </remarks>
 public interface IBusinessCentralClient
 {
+    private static NotSupportedException NotImplemented(string member) =>
+        new($"{nameof(IBusinessCentralClient)}.{member} is not implemented by this type. " +
+            "Interface members have default implementations so partial test fakes keep " +
+            "compiling; implement the member to use it.");
+
     /// <summary>Company this client is scoped to.</summary>
-    string Company { get; }
+    string Company => throw NotImplemented(nameof(Company));
 
     /// <summary>
     /// Returns a client scoped to a different company, sharing the same HTTP client and
     /// access-token cache. Returns <see langword="this"/> when the company is unchanged.
     /// </summary>
     /// <param name="company">Company name, as returned by <see cref="GetCompaniesAsync"/>.</param>
-    IBusinessCentralClient ForCompany(string company);
+    IBusinessCentralClient ForCompany(string company) =>
+        throw NotImplemented(nameof(ForCompany));
 
     /// <summary>
     /// Starts a strongly-typed query. The entity set path comes from
@@ -30,16 +46,19 @@ public interface IBusinessCentralClient
     /// <exception cref="InvalidOperationException">
     /// <typeparamref name="TEntity"/> is not annotated; use <see cref="Query{TEntity}(string)"/>.
     /// </exception>
-    IBusinessCentralQuery<TEntity> Query<TEntity>();
+    IBusinessCentralQuery<TEntity> Query<TEntity>() =>
+        throw NotImplemented(nameof(Query));
 
     /// <summary>Starts a strongly-typed query against an explicit entity set path.</summary>
     /// <typeparam name="TEntity">Entity type to query.</typeparam>
     /// <param name="path">Relative OData entity path, e.g. <c>salesOrders</c>.</param>
-    IBusinessCentralQuery<TEntity> Query<TEntity>(string path);
+    IBusinessCentralQuery<TEntity> Query<TEntity>(string path) =>
+        throw NotImplemented(nameof(Query));
 
     /// <summary>Lists the companies available in the tenant.</summary>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<List<BusinessCentralCompany>> GetCompaniesAsync(CancellationToken cancellationToken = default);
+    Task<List<BusinessCentralCompany>> GetCompaniesAsync(CancellationToken cancellationToken = default) =>
+        throw NotImplemented(nameof(GetCompaniesAsync));
 
     /// <summary>
     /// Executes an OData query against a Business Central entity and returns the matching entities.
@@ -55,7 +74,8 @@ public interface IBusinessCentralClient
         ODataFilter? filter = null,
         Action<QueryOptions>? options = null,
         IEnumerable<string>? select = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default) =>
+        throw NotImplemented(nameof(QueryAsync));
 
     /// <summary>
     /// Executes an OData query using a raw $filter string and returns the matching entities.
@@ -71,7 +91,50 @@ public interface IBusinessCentralClient
         string filter,
         Action<QueryOptions>? options = null,
         IEnumerable<string>? select = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default) =>
+        throw NotImplemented(nameof(QueryAsync));
+
+    /// <summary>
+    /// Fetches a single entity by key, returning <see langword="default"/> when it does not
+    /// exist. "Does this entity exist" is a question, not an error — a <c>404</c> yields
+    /// <see langword="default"/>; every other failure still throws.
+    /// </summary>
+    /// <remarks>
+    /// The <c>404</c> is still reported to the diagnostics observer as a failed request,
+    /// because on the wire it is one.
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type to deserialize the response into.</typeparam>
+    /// <param name="path">Relative OData entity path.</param>
+    /// <param name="key">Entity key: a systemId, or an alternate key such as <c>No='1000'</c>.</param>
+    /// <param name="select">Optional list of fields to select.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<TEntity?> GetAsync<TEntity>(
+        string path,
+        string key,
+        IEnumerable<string>? select = null,
+        CancellationToken cancellationToken = default) =>
+        throw NotImplemented(nameof(GetAsync));
+
+    /// <summary>
+    /// Returns the first entity matching <paramref name="filter"/>, or
+    /// <see langword="default"/> when nothing matches. Sends <c>$top=1</c>.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type to deserialize the response into.</typeparam>
+    /// <param name="path">Relative OData entity path.</param>
+    /// <param name="filter">Optional strongly-typed OData filter expression.</param>
+    /// <param name="select">Optional list of fields to select.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    async Task<TEntity?> FirstOrDefaultAsync<TEntity>(
+        string path,
+        ODataFilter? filter = null,
+        IEnumerable<string>? select = null,
+        CancellationToken cancellationToken = default)
+    {
+        var page = await QueryAsync<TEntity>(path, filter, o => o.WithTop(1), select, cancellationToken)
+            .ConfigureAwait(false);
+
+        return page.Count == 0 ? default : page[0];
+    }
 
     /// <summary>
     /// Executes an OData query and retrieves all matching entities by automatically paging
@@ -88,7 +151,8 @@ public interface IBusinessCentralClient
         ODataFilter? filter = null,
         Action<QueryOptions>? options = null,
         IEnumerable<string>? select = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default) =>
+        throw NotImplemented(nameof(QueryAllAsync));
 
     /// <summary>
     /// Streams every matching entity, fetching pages lazily so the whole result set is
@@ -105,7 +169,8 @@ public interface IBusinessCentralClient
         ODataFilter? filter = null,
         Action<QueryOptions>? options = null,
         IEnumerable<string>? select = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default) =>
+        throw NotImplemented(nameof(QueryStreamAsync));
 
     /// <summary>
     /// Executes a raw GET request against the given relative OData URL and deserializes the full response body.
@@ -119,7 +184,8 @@ public interface IBusinessCentralClient
     /// <param name="cancellationToken">Cancellation token.</param>
     Task<TResponse> QueryRawAsync<TResponse>(
         string path,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default) =>
+        throw NotImplemented(nameof(QueryRawAsync));
 
     /// <summary>
     /// Executes a PATCH request to partially update an existing Business Central entity.
@@ -140,7 +206,8 @@ public interface IBusinessCentralClient
         T payload,
         string ifMatch = "*",
         CancellationToken cancellationToken = default)
-        where T : class;
+        where T : class =>
+        throw NotImplemented(nameof(PatchAsync));
 
     /// <summary>
     /// Executes a POST request to create a new entity in Business Central.
@@ -157,7 +224,8 @@ public interface IBusinessCentralClient
         string path,
         T payload,
         CancellationToken cancellationToken = default)
-        where T : class;
+        where T : class =>
+        throw NotImplemented(nameof(PostAsync));
 
     /// <summary>
     /// Creates an entity, deserializing the response into a type different from the payload.
@@ -185,7 +253,8 @@ public interface IBusinessCentralClient
         string path,
         TPayload payload,
         CancellationToken cancellationToken = default)
-        where TPayload : class;
+        where TPayload : class =>
+        throw NotImplemented(nameof(PostAsync));
 
     /// <summary>
     /// Partially updates an entity, deserializing the response into a type different from
@@ -208,7 +277,8 @@ public interface IBusinessCentralClient
         TPayload payload,
         string ifMatch = "*",
         CancellationToken cancellationToken = default)
-        where TPayload : class;
+        where TPayload : class =>
+        throw NotImplemented(nameof(PatchAsync));
 
     /// <summary>
     /// Replaces an entity, deserializing the response into a type different from the payload.
@@ -230,7 +300,8 @@ public interface IBusinessCentralClient
         TPayload payload,
         string ifMatch = "*",
         CancellationToken cancellationToken = default)
-        where TPayload : class;
+        where TPayload : class =>
+        throw NotImplemented(nameof(PutAsync));
 
     /// <summary>
     /// Executes a PUT request to fully replace an existing Business Central entity.
@@ -251,7 +322,8 @@ public interface IBusinessCentralClient
         T payload,
         string ifMatch = "*",
         CancellationToken cancellationToken = default)
-        where T : class;
+        where T : class =>
+        throw NotImplemented(nameof(PutAsync));
 
     /// <summary>
     /// Executes a DELETE request to remove an existing Business Central entity.
@@ -264,5 +336,6 @@ public interface IBusinessCentralClient
         string path,
         string systemId,
         string ifMatch = "*",
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default) =>
+        throw NotImplemented(nameof(DeleteAsync));
 }

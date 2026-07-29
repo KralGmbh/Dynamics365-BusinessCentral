@@ -152,6 +152,11 @@ var orders = await client.QueryAsync<SalesOrder>("salesOrders", Filter.Equals("s
 var all    = await client.QueryAllAsync<SalesOrder>("salesOrders");
 var raw    = await client.QueryRawAsync<JsonElement>("salesOrders?$top=5");
 
+// Single-entity reads. GetAsync returns null on 404 — "does it exist" is a question,
+// not an error. Keys may be a systemId or an alternate key.
+var one   = await client.GetAsync<SalesOrder>("salesOrders", "No='1000'");
+var first = await client.FirstOrDefaultAsync<SalesOrder>("salesOrders", Filter.Equals("status", "Open"));
+
 await foreach (var o in client.QueryStreamAsync<SalesOrder>("salesOrders")) { }
 ```
 
@@ -231,6 +236,22 @@ var filter = Filter.Equals<SalesOrder>(o => o.Status, "Open")
 `Filter.In` with an empty collection yields a filter matching nothing, rather than the
 invalid OData expression `field in ()`.
 
+## Field names without the builder
+
+Path-based calls take field names as strings, which invites hand-maintained constants
+classes that drift from the model. `BusinessCentralField.Of` resolves a selector exactly
+the way deserialization does — `[JsonPropertyName]` first, then the camelCase policy — so
+wire names live in one place, the entity. `EntityPath.For<T>()` does the same for the
+entity set path:
+
+```csharp
+var lines = await client.QueryAsync<ProdOrderLine>(
+    EntityPath.For<ProdOrderLine>(),                       // path from [BusinessCentralEntity]
+    Filter.Equals<ProdOrderLine>(l => l.OrderNo, orderNo), // typed filters resolve the same way
+    select: [BusinessCentralField.Of<ProdOrderLine>(l => l.ItemNo),
+             BusinessCentralField.Of<ProdOrderLine>(l => l.Quantity)]);
+```
+
 # ♻️ Throttling and retries
 
 Business Central throttles aggressively. Throttled (`429`) and transient (`408`, `502`,
@@ -265,6 +286,31 @@ Without this, a `504` on a `POST` could duplicate a record that Business Central
 created. If your endpoint deduplicates server-side, or duplicates are acceptable, opt back
 in with `options.Retry.RetryPostOnTransientFailures = true`.
 
+Connection failures and client-side timeouts — no response received at all — are just as
+ambiguous as a `504` and follow the same column: idempotent methods are retried, `POST` is
+not. They surface as `BusinessCentralConnectionException`.
+
+## Composing with an existing resilience pipeline
+
+If a global handler wraps every `HttpClient` — e.g. .NET Aspire's
+`ConfigureHttpClientDefaults` with `AddStandardResilienceHandler` — the outer retry and
+this package's retry compose multiplicatively. Worse, the standard handler replays `POST`
+on ambiguous failures, which this package deliberately refuses to do; with both active,
+the outer handler retries before the package ever sees the failure.
+
+Prefer exempting the package's clients and keeping the built-in retry, which honours
+`Retry-After` and knows which requests are safe to replay. Both clients are addressable
+by name:
+
+```csharp
+services.AddHttpClient(BusinessCentralHttpClients.Client).RemoveAllResilienceHandlers();
+services.AddHttpClient(BusinessCentralHttpClients.Token).RemoveAllResilienceHandlers();
+```
+
+Disabling the package's retry instead (`options.Retry.Enabled = false`) also resolves the
+composition, but leaves the generic outer handler in charge — including its unsafe `POST`
+replay.
+
 # ⚠️ Errors
 
 All failures derive from `BusinessCentralException`. `Message` is a single line suitable
@@ -276,6 +322,7 @@ for logging; the detail lives on properties, and `ToString()` renders everything
 | `BusinessCentralAuthException` | `401`, `403` |
 | `BusinessCentralNotFoundException` | `404` |
 | `BusinessCentralThrottledException` | `429` |
+| `BusinessCentralConnectionException` | no response — connection failure or client-side timeout; `StatusCode` is `0` |
 | `BusinessCentralServerException` | everything else, and deserialization failures |
 
 ```csharp
@@ -287,6 +334,21 @@ catch (BusinessCentralException ex)
     if (ex.IsTransient) { /* safe to try again */ }
 }
 ```
+
+The subtypes are sealed **siblings**, not a hierarchy — a guard like
+`catch (BusinessCentralServerException ex) when (ex.StatusCode == HttpStatusCode.NotFound)`
+compiles but can never match, because a `404` is a `BusinessCentralNotFoundException`.
+Prefer the predicates on the base type, which make the safe form the obvious one:
+
+```csharp
+catch (BusinessCentralException ex) when (ex.IsNotFound)
+{
+    // already gone — treat the delete as idempotent success
+}
+```
+
+`IsNotFound`, `IsThrottled`, `IsValidation`, `IsAuth`, `IsConnectionFailure` and
+`IsTransient` cover the same distinctions as the subtypes, without the trap.
 
 # 📊 Diagnostics
 

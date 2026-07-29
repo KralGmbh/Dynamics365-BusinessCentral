@@ -94,11 +94,8 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
 
     public IBusinessCentralQuery<TEntity> Expand(params string[] fields)
     {
-        foreach (var field in fields)
-        {
-            if (!string.IsNullOrWhiteSpace(field) && !_expand.Contains(field))
-                _expand.Add(field);
-        }
+        foreach (var field in fields.Where(f => !string.IsNullOrWhiteSpace(f) && !_expand.Contains(f)))
+            _expand.Add(field);
 
         return this;
     }
@@ -203,7 +200,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
                 serverDriven = true;
 
                 page = await _executor
-                    .FetchNextPageAsync<TEntity>(page.NextLink!, cancellationToken)
+                    .FetchNextPageAsync<TEntity>(page.NextLink, cancellationToken)
                     .ConfigureAwait(false);
 
                 continue;
