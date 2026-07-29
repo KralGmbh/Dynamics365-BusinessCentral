@@ -7,6 +7,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0-alpha.2] - 2026-07-29
+
+**Prerelease.** The release candidate for 2.0.0 stable: everything below was driven by
+reviewing the alpha and by feedback from a production consumer migrating to it. Still to
+be confirmed against a live tenant before stable: the *Unverified* list under
+[2.0.0-alpha], plus a smoke test of a date filter.
+
 ### Added
 
 - **Default implementations on every `IBusinessCentralClient` member.** Hand-written test
