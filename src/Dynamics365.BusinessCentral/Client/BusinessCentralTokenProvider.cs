@@ -70,42 +70,93 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
                 ["grant_type"] = "client_credentials"
             };
 
-            var body = new FormUrlEncodedContent(form);
+            var retry = _options.Retry ?? new BusinessCentralRetryOptions();
+            var maxAttempts = retry.Enabled ? Math.Max(1, retry.MaxAttempts) : 1;
+            var transientAttempt = 0;
 
-            _observer.OnTokenRequested();
-
-            // Both are fully consumed here — nothing escapes this method — so they can be
-            // scoped. Disposing the request also releases the FormUrlEncodedContent, which
-            // carries the client secret.
-            using var req = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = body };
-            req.AddJsonHeaders();
-
-            using var res = await _http.SendAsync(req, cancellationToken).ConfigureAwait(false);
-            res.RequestMessage ??= req;
-
-            if (!res.IsSuccessStatusCode)
-                throw await BusinessCentralExceptionFactory.CreateAsync(res, cancellationToken).ConfigureAwait(false);
-
-            var json = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-
-            var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(json, _jsonOptions)
-                                ?? throw new JsonException("Token response was null.");
-
-            var expiresAt = DateTime.UtcNow + CacheLifetime(tokenResponse.ExpiresIn);
-
-            _token = new CachedAccessToken
+            // Retrying inside the lock is deliberate: every concurrent caller needs this
+            // token, so they would all fail with the same transient error anyway. Backoff
+            // here is backoff for all of them.
+            while (true)
             {
-                Token = tokenResponse.AccessToken,
-                ExpiresAt = expiresAt
-            };
+                _observer.OnTokenRequested();
 
-            _observer.OnTokenRefreshed(new BusinessCentralTokenInfo
-            {
-                ExpiresAt = expiresAt,
-                FromCache = false
-            });
+                BusinessCentralException failure;
 
-            return _token.Token;
+                try
+                {
+                    // Both are fully consumed here — nothing escapes this method — so they
+                    // can be scoped. Disposing the request also releases the
+                    // FormUrlEncodedContent, which carries the client secret. The content
+                    // must be rebuilt per attempt: a sent HttpRequestMessage cannot be
+                    // replayed.
+                    using var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
+                    {
+                        Content = new FormUrlEncodedContent(form)
+                    };
+                    req.AddJsonHeaders();
+
+                    using var res = await _http.SendAsync(req, cancellationToken).ConfigureAwait(false);
+                    res.RequestMessage ??= req;
+
+                    if (res.IsSuccessStatusCode)
+                    {
+                        var json = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+                        var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(json, _jsonOptions)
+                                            ?? throw new JsonException("Token response was null.");
+
+                        var expiresAt = DateTime.UtcNow + CacheLifetime(tokenResponse.ExpiresIn);
+
+                        _token = new CachedAccessToken
+                        {
+                            Token = tokenResponse.AccessToken,
+                            ExpiresAt = expiresAt
+                        };
+
+                        _observer.OnTokenRefreshed(new BusinessCentralTokenInfo
+                        {
+                            ExpiresAt = expiresAt,
+                            FromCache = false
+                        });
+
+                        return _token.Token;
+                    }
+
+                    failure = await BusinessCentralExceptionFactory
+                        .CreateAsync(res, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (RetryHelper.IsNetworkFailure(ex, cancellationToken))
+                {
+                    failure = new BusinessCentralConnectionException(
+                        RetryHelper.NetworkFailureMessage(ex), HttpMethod.Post.Method, endpoint, ex);
+                }
+
+                // The client_credentials grant has no side effects, so replay is
+                // unconditionally safe — none of the POST-ambiguity reasoning from the data
+                // pipeline applies. Bad credentials (400/401) are not transient and throw
+                // immediately.
+                if (!failure.IsTransient || transientAttempt + 1 >= maxAttempts)
+                    throw failure;
+
+                transientAttempt++;
+
+                var fromRetryAfter = retry.HonorRetryAfter && failure.RetryAfter != null;
+                var delay = RetryHelper.ComputeDelay(retry, failure.RetryAfter, transientAttempt);
+
+                _observer.OnRequestRetrying(new BusinessCentralRetryInfo
+                {
+                    Method = HttpMethod.Post.Method,
+                    Url = endpoint,
+                    StatusCode = (int)failure.StatusCode,
+                    Attempt = transientAttempt,
+                    Delay = delay,
+                    FromRetryAfter = fromRetryAfter
+                });
+
+                if (delay > TimeSpan.Zero)
+                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -113,11 +164,26 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
         }
     }
 
-    public async Task InvalidateAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Clears the cached token, but only if it is still the one the caller found rejected.
+    /// A caller racing behind a refresh — its <c>401</c> was for a token that has since been
+    /// replaced — must not throw away the fresh token, or concurrent <c>401</c>s cascade
+    /// into a refresh per caller.
+    /// </summary>
+    /// <param name="staleToken">The token the rejected request actually sent.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task InvalidateAsync(string staleToken, CancellationToken cancellationToken)
     {
         await _tokenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try { _token = null; }
-        finally { _tokenLock.Release(); }
+        try
+        {
+            if (_token is { } current && current.Token == staleToken)
+                _token = null;
+        }
+        finally
+        {
+            _tokenLock.Release();
+        }
     }
 
     /// <summary>

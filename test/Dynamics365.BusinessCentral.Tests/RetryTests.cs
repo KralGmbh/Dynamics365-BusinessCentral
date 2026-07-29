@@ -174,7 +174,10 @@ public class RetryTests
             {
                 MaxAttempts = 4,
                 BaseDelay = TimeSpan.FromMilliseconds(1),
-                MaxDelay = TimeSpan.FromSeconds(10)
+                MaxDelay = TimeSpan.FromSeconds(10),
+
+                // This test asserts exact delays; jitter would smear them.
+                JitterFactor = 0
             });
 
         await Assert.ThrowsAsync<BusinessCentralThrottledException>(() =>
@@ -333,6 +336,138 @@ public class RetryTests
 
         Assert.Equal(3, patches);
     }
+
+    #region Token acquisition
+
+    // The client_credentials grant has no side effects, so token requests are retried on
+    // transient failures under the same budget as data requests — a blip at
+    // login.microsoftonline.com must not fail every in-flight request at once.
+    [Fact]
+    public async Task Token_Request_Is_Retried_On_Transient_Failure()
+    {
+        var tokenCalls = 0;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+            {
+                tokenCalls++;
+
+                return tokenCalls == 1
+                    ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                    {
+                        Content = new StringContent("AADSTS transient")
+                    }
+                    : new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                    };
+            }
+
+            return TestBase.Json("{\"value\":[]}");
+        });
+
+        var result = await client.QueryAsync<TestEntity>("orders", "true");
+
+        Assert.Empty(result);
+        Assert.Equal(2, tokenCalls);
+    }
+
+    [Fact]
+    public async Task Token_Request_Is_Retried_On_Network_Failure()
+    {
+        var tokenCalls = 0;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+            {
+                tokenCalls++;
+
+                if (tokenCalls == 1)
+                    throw new HttpRequestException("connection reset");
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                };
+            }
+
+            return TestBase.Json("{\"value\":[]}");
+        });
+
+        await client.QueryAsync<TestEntity>("orders", "true");
+
+        Assert.Equal(2, tokenCalls);
+    }
+
+    // Bad credentials are not transient: retrying a 400/401 from the token endpoint would
+    // just hammer the identity provider with the same wrong secret.
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, typeof(BusinessCentralValidationException))]
+    [InlineData(HttpStatusCode.Unauthorized, typeof(BusinessCentralAuthException))]
+    public async Task Token_Request_Is_Not_Retried_On_Credential_Failures(
+        HttpStatusCode status, Type expectedException)
+    {
+        var tokenCalls = 0;
+
+        var client = TestBase.CreateClient(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+            {
+                tokenCalls++;
+                return new HttpResponseMessage(status)
+                {
+                    Content = new StringContent("{\"error\":\"invalid_client\"}")
+                };
+            }
+
+            return TestBase.Json("{\"value\":[]}");
+        });
+
+        var ex = await Assert.ThrowsAnyAsync<BusinessCentralException>(() =>
+            client.QueryAsync<TestEntity>("orders", "true"));
+
+        Assert.IsType(expectedException, ex);
+        Assert.Equal(1, tokenCalls);
+    }
+
+    [Fact]
+    public async Task Token_Retries_Are_Reported_To_The_Observer()
+    {
+        var observer = new RecordingObserver();
+        var tokenCalls = 0;
+
+        var client = TestBase.CreateClient(
+            req =>
+            {
+                if (req.RequestUri!.AbsoluteUri.Contains("auth"))
+                {
+                    tokenCalls++;
+
+                    return tokenCalls == 1
+                        ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                        {
+                            Content = new StringContent("down")
+                        }
+                        : new HttpResponseMessage(HttpStatusCode.OK)
+                        {
+                            Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
+                        };
+                }
+
+                return TestBase.Json("{\"value\":[]}");
+            },
+            observer);
+
+        await client.QueryAsync<TestEntity>("orders", "true");
+
+        var retry = Assert.Single(observer.Retries);
+        Assert.Equal(503, retry.StatusCode);
+        Assert.Contains("auth", retry.Url);
+    }
+
+    #endregion
 
     #region Network failures
 

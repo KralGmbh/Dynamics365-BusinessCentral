@@ -34,6 +34,19 @@ public sealed class BusinessCentralRetryOptions
     public bool HonorRetryAfter { get; set; } = true;
 
     /// <summary>
+    /// How much random spread is added to every retry delay, as a fraction of the delay:
+    /// the actual wait is <c>delay + random(0, delay × JitterFactor)</c>, still capped by
+    /// <see cref="MaxDelay"/>. Defaults to <c>0.2</c>; set <c>0</c> for deterministic delays.
+    /// </summary>
+    /// <remarks>
+    /// Without jitter, every caller that is throttled at the same moment retries at the same
+    /// moment — Business Central hands all of them the same <c>Retry-After</c> — and they
+    /// re-throttle each other in lockstep. The spread is <b>added</b>, never subtracted: a
+    /// <c>Retry-After</c> is a minimum wait, and retrying early guarantees another <c>429</c>.
+    /// </remarks>
+    public double JitterFactor { get; set; } = 0.2;
+
+    /// <summary>
     /// Whether a <c>POST</c> may be replayed after a transient failure <i>other than</i>
     /// <c>429</c>. Defaults to <see langword="false"/>.
     /// </summary>

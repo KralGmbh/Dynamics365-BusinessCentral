@@ -47,7 +47,7 @@ CI: `.github/workflows/sonar.yml` builds + tests on net8.0 and runs SonarCloud o
 Everything funnels through `BusinessCentralClient.SendWithAuthRetryAsync`, a single loop with **two independent retry budgets**:
 
 - **auth** — one retry, tracked by `authRetried`. A `401` invalidates the token and retries once.
-- **transient** — `BusinessCentralRetryOptions.MaxAttempts`, tracked by `transientAttempt`. Gated by `IsSafeToReplay`, not by `IsTransient` alone. `ComputeDelay` prefers the server's `Retry-After`, else doubles `BaseDelay`; both capped by `MaxDelay`.
+- **transient** — `BusinessCentralRetryOptions.MaxAttempts`, tracked by `transientAttempt`. Gated by `IsSafeToReplay`, not by `IsTransient` alone. `RetryHelper.ComputeDelay` (shared with the token provider) prefers the server's `Retry-After`, else doubles `BaseDelay`; both are jittered additively by `JitterFactor` (never below a `Retry-After` — it's a minimum wait) and capped by `MaxDelay`.
 
 `IsSafeToReplay` encodes a deliberate asymmetry: a `429` is rejected *before* processing so it is always replayable, but `408/502/503/504` are ambiguous — the write may already have landed. A `POST` is therefore not replayed on those unless `Retry.RetryPostOnTransientFailures` is set, because a duplicate row is worse than a surfaced error. `GET`/`PUT`/`DELETE` are idempotent and always retried. Don't "simplify" this back to a plain `IsTransient` check.
 
@@ -60,6 +60,8 @@ The client never mutates the injected `HttpClient` (it may be pooled). Accept/Us
 ### Token acquisition
 
 `BusinessCentralTokenProvider` owns the token cache: lock-free fast path, then a `SemaphoreSlim` with double-check before the client-credentials POST. Tokens are cached with a 60-second safety margin subtracted from `expires_in`. It uses `options.ResolvedTokenEndpoint` — never re-implement placeholder substitution locally.
+
+The token POST retries transient failures under the same `Retry` options as data requests, **inside the lock** — every waiter needs the same token, so backoff for one is backoff for all. Replay is unconditionally safe (`client_credentials` has no side effects), so it gates on `IsTransient` alone, not `IsSafeToReplay`; credential failures (`400`/`401`) throw immediately. `InvalidateAsync(staleToken, …)` is compare-and-swap: it only clears the cache when the rejected token is still the cached one, so concurrent `401`s cannot cascade refreshes.
 
 **It is registered as a singleton on purpose.** Typed HTTP clients are transient, so a cache living on `BusinessCentralClient` would re-authenticate on every injection. It gets its own named `HttpClient` (`TokenHttpClientName`) via `IHttpClientFactory`. If you ever move token state back onto the client, you reintroduce that bug — `Token_Cache_Is_Shared_Across_Resolved_Clients` guards it.
 
@@ -85,13 +87,13 @@ Note the quirk in `BuildQueryUrl`: a filter string of `"true"` is treated as "no
 
 ### Paging
 
-Two paging implementations exist and must stay in agreement: `BusinessCentralClient.QueryStreamAsync` (path-based) and `BusinessCentralQuery<T>.StreamAsync` (fluent). Both use the same three-tier termination:
+The auto-paging state machine lives **once**, in `QueryPager` (internal, `OData/`); both public entry points — `BusinessCentralClient.QueryStreamAsync` (path-based) and `BusinessCentralQuery<T>.StreamAsync` (fluent) — delegate to it and differ only in their fetch delegates. Termination is three-tier:
 
 1. Follow `@odata.nextLink` whenever present, and set `serverDriven`.
 2. Once `serverDriven`, a missing nextLink means the collection is exhausted — the `$top` short-page rule no longer applies.
 3. Otherwise stop on the first page shorter than the requested size.
 
-`QueryOptions.PageSize` is rows-per-round-trip; `Top` is a result cap — in both implementations. Each computes the next request's `$top` via `NextTop(pageSize, limit, emitted)` so a request never overshoots the cap. The old `WithTop`-as-page-size behaviour is gone (2.0); `WithPageSize` is the only way to size round trips.
+`QueryOptions.PageSize` is rows-per-round-trip; `Top` is a result cap. `QueryPager.NextTop(pageSize, limit, emitted)` computes each request's `$top` so a request never overshoots the cap. The old `WithTop`-as-page-size behaviour is gone (2.0); `WithPageSize` is the only way to size round trips.
 
 ### Writes
 
