@@ -40,8 +40,8 @@ public class FluentSelectAndFilterBuilderTests
     [Fact]
     public void Derived_Select_Includes_Only_Settable_Scalar_Columns_Sorted_Ordinally()
     {
-        // Uppercase sorts before lowercase ordinally, so the attribute-renamed and
-        // policy-named fields interleave deterministically.
+        // Ordinal ordering keeps the mix of policy-named and attribute-renamed fields
+        // deterministic, so URL assertions never depend on reflection order.
         Assert.Equal(
             ["amount", "ccoSpecial", "no", "postingDate"],
             EntitySelect.For<ProjectionEntity>());
@@ -55,9 +55,34 @@ public class FluentSelectAndFilterBuilderTests
 
         await bc.Client.Query<SalesOrder>().ToListAsync();
 
+        // Ordinal sort puts the uppercase attribute name first — deterministic across
+        // naming sources.
         Assert.Contains(
             "$select=Sell_to_Customer_No,amount,no,status",
             bc.Requests.Single().DecodedPathAndQuery);
+    }
+
+    // Select(...) and SelectAll() are mutually exclusive; the last call wins.
+    [Fact]
+    public async Task SelectAll_After_Select_Wins()
+    {
+        using var bc = new FakeBusinessCentral();
+        bc.EnqueuePage<SalesOrder>();
+
+        await bc.Client.Query<SalesOrder>().Select(o => o.No).SelectAll().ToListAsync();
+
+        Assert.DoesNotContain("$select", bc.Requests.Single().PathAndQuery);
+    }
+
+    [Fact]
+    public async Task Select_After_SelectAll_Wins()
+    {
+        using var bc = new FakeBusinessCentral();
+        bc.EnqueuePage<SalesOrder>();
+
+        await bc.Client.Query<SalesOrder>().SelectAll().Select(o => o.No).ToListAsync();
+
+        Assert.Contains("$select=no", bc.Requests.Single().DecodedPathAndQuery);
     }
 
     [Fact]

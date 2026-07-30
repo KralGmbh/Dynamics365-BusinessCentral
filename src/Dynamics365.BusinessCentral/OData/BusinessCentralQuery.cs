@@ -76,6 +76,8 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
 
     public IBusinessCentralQuery<TEntity> Select(params Expression<Func<TEntity, object?>>[] fields)
     {
+        _selectAll = false;
+
         foreach (var field in fields)
         {
             var name = PropertyPath.Resolve(field);
@@ -88,7 +90,10 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
 
     public IBusinessCentralQuery<TEntity> SelectAll()
     {
+        // Mutually exclusive with Select(...): the last call wins, so the builder's state
+        // is always one of explicit / all / derived — never an ambiguous mix.
         _selectAll = true;
+        _select.Clear();
         return this;
     }
 

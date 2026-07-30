@@ -62,7 +62,8 @@ public interface IBusinessCentralQuery<TEntity>
     /// <summary>
     /// Requests every column (<b>no</b> <c>$select</c>), suppressing the derived
     /// projection — for deliberately partial entity types where the full row is wanted,
-    /// e.g. for diagnostics.
+    /// e.g. for diagnostics. Mutually exclusive with <see cref="Select"/>: whichever was
+    /// called last wins.
     /// </summary>
     IBusinessCentralQuery<TEntity> SelectAll();
 
