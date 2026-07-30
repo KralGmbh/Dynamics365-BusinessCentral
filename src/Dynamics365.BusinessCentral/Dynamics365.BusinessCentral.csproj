@@ -7,7 +7,7 @@
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>2.0.0-alpha.5</Version>
+        <Version>2.0.0-alpha.6</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
 
@@ -35,15 +35,15 @@
         <!-- Shown on the nuget.org package page. Kept short and pointed at CHANGELOG.md
              rather than duplicated, since nuget.org renders this as plain text. -->
         <PackageReleaseNotes>
-            PRERELEASE — 2.0.0-alpha.5 is the final validation build before 2.0.0 stable.
+            PRERELEASE — 2.0.0-alpha.6 adds the consumer-ergonomics round before 2.0.0
+            stable.
 
-            Auto-paging is now server-driven, based on live-tenant measurement: no page
-            size is sent by default, Business Central pages at its own configured Max Page
-            Size and continuation follows @odata.nextLink ($skiptoken cursor — the $skip
-            loop is gone). BusinessCentralOptions.MaxPageSize and WithPageSize request
-            smaller pages via Prefer: odata.maxpagesize. Also: observer callbacks are
-            isolated, caller cancellation is no longer reported as a failure, and
-            Prefer: return=representation was verified against a live tenant.
+            Query&lt;T&gt;().Where(f =&gt; ...) infers the entity type per operator; $select
+            is now derived from the entity's settable scalar properties by default
+            (SelectAll() opts out; explicit Select(...) still wins); and
+            BusinessCentralOptions.RequestTimeout configures the data client's per-attempt
+            timeout. The README documents how message-level retry policies should map this
+            package's exception types.
 
             Breaking changes — see the migration guide before upgrading:
             https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/MIGRATION.md

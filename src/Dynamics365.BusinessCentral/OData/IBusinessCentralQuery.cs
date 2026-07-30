@@ -28,6 +28,16 @@ public interface IBusinessCentralQuery<TEntity>
     /// <summary>Adds a raw OData <c>$filter</c> expression, combined using <c>and</c>.</summary>
     IBusinessCentralQuery<TEntity> Where(string filter);
 
+    /// <summary>
+    /// Adds a filter built with the entity type already inferred — no type argument to
+    /// restate per operator:
+    /// <code>
+    /// .Where(f =&gt; f.Equals(x =&gt; x.Status, "Open").And(f.GreaterThan(x =&gt; x.Amount, 100)))
+    /// </code>
+    /// Combined with any existing filter using <c>and</c>, exactly like the other overloads.
+    /// </summary>
+    IBusinessCentralQuery<TEntity> Where(Func<IFilterBuilder<TEntity>, ODataFilter> build);
+
     /// <summary>Orders ascending, replacing any ordering set so far.</summary>
     IBusinessCentralQuery<TEntity> OrderBy(Expression<Func<TEntity, object?>> field);
 
@@ -40,8 +50,22 @@ public interface IBusinessCentralQuery<TEntity>
     /// <summary>Appends a descending sort key.</summary>
     IBusinessCentralQuery<TEntity> ThenByDescending(Expression<Func<TEntity, object?>> field);
 
-    /// <summary>Restricts the returned fields (<c>$select</c>).</summary>
+    /// <summary>
+    /// Restricts the returned fields (<c>$select</c>). When neither this nor
+    /// <see cref="SelectAll"/> is called, <c>$select</c> is <b>derived from
+    /// <typeparamref name="TEntity"/></b>: its settable scalar properties, resolved to
+    /// wire names the same way filters and deserialization are. The entity class states
+    /// the projection once — call sites stop restating it.
+    /// </summary>
     IBusinessCentralQuery<TEntity> Select(params Expression<Func<TEntity, object?>>[] fields);
+
+    /// <summary>
+    /// Requests every column (<b>no</b> <c>$select</c>), suppressing the derived
+    /// projection — for deliberately partial entity types where the full row is wanted,
+    /// e.g. for diagnostics. Mutually exclusive with <see cref="Select"/>: whichever was
+    /// called last wins.
+    /// </summary>
+    IBusinessCentralQuery<TEntity> SelectAll();
 
     /// <summary>Expands navigation properties (<c>$expand</c>).</summary>
     IBusinessCentralQuery<TEntity> Expand(params Expression<Func<TEntity, object?>>[] fields);

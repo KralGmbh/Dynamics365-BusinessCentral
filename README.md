@@ -98,14 +98,26 @@ they survive renames and always match how the entity is deserialized.
 
 ```csharp
 var orders = await client.Query<SalesOrder>()
-    .Where(Filter.Equals<SalesOrder>(o => o.Status, "Open"))
-    .Where(Filter.GreaterThan<SalesOrder>(o => o.Amount, 100))
+    .Where(f => f.Equals(o => o.Status, "Open")
+                 .And(f.GreaterThan(o => o.Amount, 100)))
     .OrderByDescending(o => o.Amount)
     .ThenBy(o => o.No)
-    .Select(o => o.No, o => o.Amount)
     .Top(50)
     .ToListAsync();
 ```
+
+The `Where(f => ...)` builder infers the entity type from the query, so it is never
+restated per operator; the static `Filter.Equals<SalesOrder>(...)` form remains available
+and renders identically.
+
+**`$select` is derived from the entity by default**: the query above sends
+`$select=Sell_to_Customer_No,amount,no,status` — the settable scalar properties of
+`SalesOrder`, resolved exactly like deserialization. The entity class states the
+projection once; call sites stop restating it. An explicit `.Select(...)` narrows it,
+`.SelectAll()` requests every column. Two things to know: navigation properties and
+get-only computed properties are excluded automatically, and `$select` is
+**case-sensitive** on the server even though deserialization is not — a `[JsonPropertyName]`
+whose casing drifts from `$metadata` fails loudly here instead of silently deserializing.
 
 | Operation | Method |
 | --------- | ------ |
@@ -349,7 +361,27 @@ services.AddHttpClient(BusinessCentralHttpClients.Token).RemoveAllResilienceHand
 ```
 
 Exempting the token client is safe: token acquisition has its own retry under the same
-`Retry` options, so removing the outer handler does not leave it bare.
+`Retry` options, so removing the outer handler does not leave it bare. The per-attempt
+timeout of the data client is configurable via `options.RequestTimeout` (default: the
+`HttpClient` 100s) — budget `Retry.MaxAttempts × (RequestTimeout + backoff)` against any
+outer execution timeout.
+
+## Mapping exceptions in message-level retry policies
+
+If a message bus or job runner (Wolverine, MassTransit, Hangfire, Polly) retries around
+client calls, key its policies on this package's exception types — **not** on
+`HttpRequestException`, which the client never lets escape:
+
+| Match | Meaning | Suggested policy |
+| ----- | ------- | ---------------- |
+| `BusinessCentralConnectionException` | no response — connection failure / timeout (already retried in-process) | fast requeue curve |
+| `BusinessCentralThrottledException` | `429` — the client already honoured `Retry-After` | slow requeue curve |
+| `ex.IsTransient` | any retry-worthy failure | generic transient handling |
+| everything else | validation/auth/not-found — retrying cannot help | dead-letter / alert |
+
+A policy keyed on `HttpRequestException` written for 1.x **silently stops matching** on
+2.0 — transport failures surface as `BusinessCentralConnectionException` with the original
+exception as `InnerException`.
 
 Disabling the package's retry instead (`options.Retry.Enabled = false`) also resolves the
 composition, but leaves the generic outer handler in charge — including its unsafe `POST`

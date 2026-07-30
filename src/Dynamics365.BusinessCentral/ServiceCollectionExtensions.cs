@@ -97,12 +97,19 @@ public static class ServiceCollectionExtensions
         // Explicit factory rather than ActivatorUtilities: the constructor taking the
         // token provider is internal and would otherwise not be selected.
         services.AddHttpClient<IBusinessCentralClient, BusinessCentralClient>(
-            ClientHttpClientName,
-            (http, sp) => new BusinessCentralClient(
-                http,
-                sp.GetRequiredService<IOptions<BusinessCentralOptions>>(),
-                sp.GetRequiredService<BusinessCentralTokenProvider>(),
-                sp.GetService<IBusinessCentralObserver>()));
+                ClientHttpClientName,
+                (http, sp) => new BusinessCentralClient(
+                    http,
+                    sp.GetRequiredService<IOptions<BusinessCentralOptions>>(),
+                    sp.GetRequiredService<BusinessCentralTokenProvider>(),
+                    sp.GetService<IBusinessCentralObserver>()))
+            // The one place the package configures the HttpClient — at registration, not
+            // on the pooled instance (the client itself never mutates it).
+            .ConfigureHttpClient((sp, http) =>
+            {
+                if (sp.GetRequiredService<IOptions<BusinessCentralOptions>>().Value.RequestTimeout is { } timeout)
+                    http.Timeout = timeout;
+            });
 
         return services;
     }

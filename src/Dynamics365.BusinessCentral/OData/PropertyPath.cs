@@ -53,7 +53,13 @@ internal static class PropertyPath
             ? unary.Operand
             : expression;
 
-    private static string ResolveName(MemberInfo member) => _cache.GetOrAdd(member, static m =>
+    /// <summary>
+    /// Resolves a member to its wire name — <see cref="JsonPropertyNameAttribute"/> first,
+    /// then the shared naming policy. Internal so <c>EntitySelect</c> derives
+    /// <c>$select</c> lists through the exact same rules; a second implementation would
+    /// drift.
+    /// </summary>
+    internal static string ResolveName(MemberInfo member) => _cache.GetOrAdd(member, static m =>
     {
         var attribute = m.GetCustomAttribute<JsonPropertyNameAttribute>(inherit: true);
 

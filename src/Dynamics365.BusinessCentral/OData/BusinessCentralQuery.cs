@@ -21,6 +21,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
     private readonly List<string> _select = [];
 
     private ODataFilter? _filter;
+    private bool _selectAll;
     private int? _top;
     private int? _skip;
     private int? _pageSize;
@@ -41,6 +42,13 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
 
     public IBusinessCentralQuery<TEntity> Where(string filter) =>
         string.IsNullOrWhiteSpace(filter) ? this : Where(new ODataFilter(filter));
+
+    public IBusinessCentralQuery<TEntity> Where(Func<IFilterBuilder<TEntity>, ODataFilter> build)
+    {
+        ArgumentNullException.ThrowIfNull(build);
+
+        return Where(build(FilterBuilder<TEntity>.Instance));
+    }
 
     public IBusinessCentralQuery<TEntity> OrderBy(Expression<Func<TEntity, object?>> field)
     {
@@ -68,6 +76,8 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
 
     public IBusinessCentralQuery<TEntity> Select(params Expression<Func<TEntity, object?>>[] fields)
     {
+        _selectAll = false;
+
         foreach (var field in fields)
         {
             var name = PropertyPath.Resolve(field);
@@ -75,6 +85,15 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
                 _select.Add(name);
         }
 
+        return this;
+    }
+
+    public IBusinessCentralQuery<TEntity> SelectAll()
+    {
+        // Mutually exclusive with Select(...): the last call wins, so the builder's state
+        // is always one of explicit / all / derived — never an ambiguous mix.
+        _selectAll = true;
+        _select.Clear();
         return this;
     }
 
@@ -205,8 +224,10 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         options.WithCount();
         options.Top = 0;
 
+        // A count query returns no rows, so it needs no column list — skip the derived
+        // $select rather than sending a pointless projection.
         var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, null, cancellationToken)
+            .FetchPageAsync<TEntity>(_path, FilterValue, options, select: null, maxPageSize: null, cancellationToken)
             .ConfigureAwait(false);
 
         if (page.Count is { } count)
@@ -223,7 +244,14 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
 
     private string FilterValue => _filter?.Value ?? string.Empty;
 
-    private IEnumerable<string>? SelectOrNull => _select.Count == 0 ? null : _select;
+    /// <summary>
+    /// Explicit <c>Select(...)</c> wins; <c>SelectAll()</c> suppresses; otherwise the
+    /// projection is derived from the entity type (<see cref="EntitySelect"/>).
+    /// </summary>
+    private IEnumerable<string>? SelectOrNull =>
+        _select.Count > 0 ? _select
+        : _selectAll ? null
+        : EntitySelect.For<TEntity>() is { Length: > 0 } derived ? derived : null;
 
     private QueryOptions BuildOptions()
     {

@@ -65,6 +65,21 @@ public sealed class BusinessCentralOptions
     /// </remarks>
     public int? MaxPageSize { get; set; }
 
+    /// <summary>
+    /// Per-attempt timeout applied to the data <see cref="HttpClient"/> registered by
+    /// <c>AddBusinessCentral</c>. Defaults to <see langword="null"/> — the
+    /// <see cref="HttpClient"/> default of 100 seconds. A timeout surfaces as
+    /// <c>BusinessCentralConnectionException</c> and is retried under the normal replay
+    /// rules.
+    /// </summary>
+    /// <remarks>
+    /// Applies per attempt, not per logical call — budget for
+    /// <c>Retry.MaxAttempts × (RequestTimeout + backoff)</c> when composing with an outer
+    /// execution timeout. Only honoured on the DI registration path; a manually
+    /// constructed client owns its <see cref="HttpClient"/> and its timeout.
+    /// </remarks>
+    public TimeSpan? RequestTimeout { get; set; }
+
     /// <summary><see cref="BaseUrl"/> with all placeholders substituted.</summary>
     internal string ResolvedBaseUrl => ResolvePlaceholders(BaseUrl);
 

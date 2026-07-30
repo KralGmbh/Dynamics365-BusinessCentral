@@ -85,9 +85,9 @@ Note the quirk in `BuildQueryUrl`: a filter string of `"true"` is treated as "no
 
 ### Filters and typed field names
 
-`ODataFilter`'s constructor is `internal` — expressions can only be produced by `Filter` or `FilterExtensions`. New operators belong in those two files, and each needs **both** a string and an `Expression<Func<TEntity, object?>>` overload. `Filter.Format` handles type→OData literal conversion (invariant culture); extend it there when adding value types.
+`ODataFilter`'s constructor is `internal` — expressions can only be produced by `Filter`, `FilterExtensions` or `IFilterBuilder<T>` (the type-inferred form used inside `Query<T>().Where(f => ...)`; `FilterBuilder<T>` is a stateless per-closed-generic singleton that forwards to `Filter`'s typed overloads). New operators belong in `Filter`/`FilterExtensions` and need **three** surfaces kept in sync: a string overload, an `Expression<Func<TEntity, object?>>` overload, and the `IFilterBuilder<T>` member — the parity test in `FluentSelectAndFilterBuilderTests` fails if the builder lags. `Filter.Format` handles type→OData literal conversion (invariant culture); extend it there when adding value types.
 
-`PropertyPath.Resolve` turns a selector into a field name using `JsonPropertyNameAttribute` first, then `BusinessCentralJson.Options.PropertyNamingPolicy`. That coupling is the point: `$filter`/`$select`/`$orderby` names always match deserialization. It strips the compiler's boxing `Convert` and walks nested members into `a/b` navigation paths.
+`PropertyPath.Resolve` turns a selector into a field name using `JsonPropertyNameAttribute` first, then `BusinessCentralJson.Options.PropertyNamingPolicy`. `EntitySelect` derives the fluent builder's default `$select` (settable scalar props, no `[JsonIgnore]`, no `@`-names, ordinal-sorted) through the same `PropertyPath.ResolveName` — never re-implement the name rules. Explicit `Select(...)` wins; `SelectAll()` suppresses; `CountAsync` sends none. That coupling is the point: `$filter`/`$select`/`$orderby` names always match deserialization. It strips the compiler's boxing `Convert` and walks nested members into `a/b` navigation paths.
 
 ### Paging
 

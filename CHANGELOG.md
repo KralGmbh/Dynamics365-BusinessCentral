@@ -7,6 +7,44 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0-alpha.6] - 2026-07-30
+
+**Prerelease.** The consumer-ergonomics round (F1/F2 from
+[FEATURE-REQUESTS-BASTION.md](FEATURE-REQUESTS-BASTION.md)), shipped ahead of the
+consumer's fluent-builder migration.
+
+### Added
+
+- **Builder-inferred filters (F1).** `Query<T>().Where(f => f.Equals(x => x.Status, "Open")
+  .And(f.GreaterThan(x => x.Amount, 100)))` — `IFilterBuilder<T>` mirrors every `Filter`
+  operator with the entity type fixed, forwarding to the existing typed overloads so
+  rendering is identical. The static form remains.
+- **`SelectAll()`** on the fluent builder: requests every column, suppressing the derived
+  projection below.
+- **`BusinessCentralOptions.RequestTimeout`** (nullable, default null = `HttpClient`'s
+  100s): per-attempt timeout for the data client on the DI path — no more re-registering
+  the named client just to set a timeout. Timeouts surface as
+  `BusinessCentralConnectionException` and retry under the normal rules.
+
+### Changed
+
+- **The fluent builder derives `$select` from the entity type (F2)** when neither
+  `Select(...)` nor `SelectAll()` is used: the settable scalar properties — the columns the
+  type can actually hold — resolved through the same rules as filters and deserialization,
+  ordinal-sorted for deterministic URLs. Navigation properties, get-only computed
+  properties, `[JsonIgnore]` and `@`-annotations are excluded; `CountAsync` sends no
+  `$select`. This can only **narrow** what is requested, so existing deserialization keeps
+  working — but note `$select` is case-sensitive server-side: latent `[JsonPropertyName]`
+  casing drift that deserialization tolerated now fails loudly. Path-based `QueryAsync` is
+  unchanged.
+
+### Documentation
+
+- README: builder-form `Where` as the leading example; derived-`$select` explanation; new
+  *"Mapping exceptions in message-level retry policies"* section (Wolverine/MassTransit/
+  Polly must key on `BusinessCentralConnectionException`/`BusinessCentralThrottledException`
+  or `IsTransient` — never `HttpRequestException`, which the client no longer lets escape).
+
 ## [2.0.0-alpha.5] - 2026-07-30
 
 **Prerelease.** The final validation build before 2.0.0 stable: server-driven paging from
