@@ -28,6 +28,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   page preference for streaming reads, overridable per query with `WithPageSize`. Null
   defers entirely to the server's configuration.
 
+### Fixed
+
+- **A throwing observer can no longer break requests.** `IBusinessCentralObserver`
+  callbacks are isolated: diagnostics are best-effort, so a bug in an observer no longer
+  turns a successful request into a failure or masks the real server error.
+- **Caller-requested cancellation is no longer reported to the observer as a request
+  failure** — ordinary shutdowns stop putting noise in error metrics. Timeouts (which are
+  not caller-requested) are still reported.
+- **The manual-construction constructor documents its trade-off**: a privately created,
+  per-instance token cache and shared token/data HTTP traffic — construct once and reuse,
+  or prefer `AddBusinessCentral`.
+
 ## [2.0.0-alpha.4] - 2026-07-30
 
 **Prerelease.** Incorporates the first live-tenant validation round

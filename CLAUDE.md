@@ -53,7 +53,9 @@ Everything funnels through `BusinessCentralClient.SendWithAuthRetryAsync`, a sin
 
 `IsSafeToReplay` encodes a deliberate asymmetry: a `429` is rejected *before* processing so it is always replayable, but `408/502/503/504` are ambiguous — the write may already have landed. A `POST` is therefore not replayed on those unless `Retry.RetryPostOnTransientFailures` is set, because a duplicate row is worse than a surfaced error. `GET`/`PUT`/`DELETE` are idempotent and always retried. Don't "simplify" this back to a plain `IsTransient` check.
 
-Each attempt clones the request (`HttpRequestExtensions.Clone`, because a sent `HttpRequestMessage` can't be reused). A failure is reported to the observer exactly once — the throw site sets `failureReported` so the catch-all doesn't double-report.
+Each attempt builds a fresh request via the `createRequest` factory passed to `SendWithAuthRetryAsync` (a sent `HttpRequestMessage` can't be reused). A failure is reported to the observer exactly once — the throw site sets `failureReported` so the catch-all doesn't double-report — and a caller-requested cancellation is not reported at all. Observers are wrapped in `SafeBusinessCentralObserver` (`Diagnostics/`), which swallows callback exceptions: diagnostics must never break the pipeline, so never call a consumer observer directly.
+
+Responses are **deliberately buffered as strings** before deserialization: the raw body on `BusinessCentralException.ResponseBody` and in `OnDeserializationFailed` is the package's most valuable field diagnostic (a consumer debugged a prod deserialization failure from a single log line). Under server-driven paging the default page can be 20k rows, so this costs memory — `BusinessCentralOptions.MaxPageSize` is the documented knob. Don't switch to stream deserialization without solving the lost-body diagnostics.
 
 Tests must set `Retry.BaseDelay`/`MaxDelay` to zero or they sleep; `TestBase.CreateClient` already does.
 

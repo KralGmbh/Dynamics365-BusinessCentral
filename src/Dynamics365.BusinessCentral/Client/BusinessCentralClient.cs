@@ -29,6 +29,13 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     private static readonly JsonSerializerOptions _jsonOptions = BusinessCentralJson.Options;
 
     /// <summary>Creates a client for the company configured in <paramref name="options"/>.</summary>
+    /// <remarks>
+    /// Prefer registration via <c>AddBusinessCentral</c>: with this constructor the client
+    /// creates a <b>private</b> token cache, so every manually constructed instance
+    /// re-authenticates independently — construct once and reuse, don't new one up per
+    /// call. Token requests also share <paramref name="http"/> with data traffic here,
+    /// instead of the separate named client the DI path uses.
+    /// </remarks>
     /// <param name="http">HTTP client used for data requests.</param>
     /// <param name="options">Connection settings.</param>
     /// <param name="observer">Optional diagnostics observer.</param>
@@ -48,7 +55,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     {
         _http = http;
         _options = options.Value;
-        _observer = observer ?? new NullBusinessCentralObserver();
+        _observer = SafeBusinessCentralObserver.Wrap(observer);
         _company = _options.Company;
 
         // No mutation of the supplied HttpClient: it may be pooled or shared, and setting
@@ -774,7 +781,12 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         }
         catch (Exception ex)
         {
-            if (!failureReported)
+            // A cancellation the caller asked for is not a failure — reporting it would
+            // put noise in every consumer's error metrics on ordinary shutdowns.
+            var callerCancelled =
+                ex is OperationCanceledException && cancellationToken.IsCancellationRequested;
+
+            if (!failureReported && !callerCancelled)
             {
                 _observer.OnRequestFailed(new BusinessCentralErrorInfo
                 {
