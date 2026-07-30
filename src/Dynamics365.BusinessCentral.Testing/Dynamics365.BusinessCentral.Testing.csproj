@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+
+        <PackageId>Dynamics365.BusinessCentral.Testing</PackageId>
+        <Version>2.0.0-alpha.2</Version>
+        <Authors>Daniel Rückenbach</Authors>
+        <Company>KRAL GmbH</Company>
+
+        <Description>
+            Test doubles for Dynamics365.BusinessCentral: script responses, run your code
+            against a real client, and assert the exact OData URLs it produced.
+        </Description>
+
+        <PackageTags>Dynamics365 BusinessCentral OData Client Testing Fake Mock</PackageTags>
+
+        <PackageProjectUrl>https://github.com/KralGmbh/Dynamics365-BusinessCentral</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/KralGmbh/Dynamics365-BusinessCentral</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+
+        <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+
+        <Title>Dynamics365 Business Central Testing</Title>
+        <PackageIcon>bcclient.png</PackageIcon>
+
+        <PackageReleaseNotes>
+            Test doubles for Dynamics365.BusinessCentral. Versioned in lockstep with the
+            main package — see its release notes and changelog:
+            https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/CHANGELOG.md
+        </PackageReleaseNotes>
+
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Dynamics365.BusinessCentral\Dynamics365.BusinessCentral.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="README.md" Pack="true" PackagePath="\" />
+        <None Include="..\Dynamics365.BusinessCentral\bcclient.png" Pack="true" PackagePath="\" Link="bcclient.png" />
+    </ItemGroup>
+
+</Project>

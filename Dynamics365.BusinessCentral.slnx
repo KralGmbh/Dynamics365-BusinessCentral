@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Dynamics365.BusinessCentral/Dynamics365.BusinessCentral.csproj" />
+    <Project Path="src/Dynamics365.BusinessCentral.Testing/Dynamics365.BusinessCentral.Testing.csproj" />
   </Folder>
   <Folder Name="/test/">
     <Project Path="test/Dynamics365.BusinessCentral.Tests/Dynamics365.BusinessCentral.Tests.csproj" Id="50dec5d1-86c4-4fa7-a18a-b9e9f24fbe40" />
