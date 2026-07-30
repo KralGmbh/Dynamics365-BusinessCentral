@@ -222,7 +222,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         // A count query returns no rows, so it needs no column list — skip the derived
         // $select rather than sending a pointless projection.
         var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, options, select: null, null, cancellationToken)
+            .FetchPageAsync<TEntity>(_path, FilterValue, options, select: null, maxPageSize: null, cancellationToken)
             .ConfigureAwait(false);
 
         if (page.Count is { } count)
