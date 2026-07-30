@@ -140,6 +140,21 @@ public class FakeBusinessCentralTests
         Assert.Equal(1, bc.TokenRequestCount);
     }
 
+    // Relative nextLinks must follow a BaseUrl override, or the continuation request is
+    // captured on a different host than every other request.
+    [Fact]
+    public async Task Relative_NextLink_Resolves_Against_An_Overridden_BaseUrl()
+    {
+        using var bc = new FakeBusinessCentral(o => o.BaseUrl = "https://custom.example/odata");
+        bc.EnqueuePage([new TestEntity { Id = 1 }], nextLink: "page2")
+          .EnqueuePage([new TestEntity { Id = 2 }]);
+
+        await bc.Client.QueryAllAsync<TestEntity>("items");
+
+        Assert.Equal(2, bc.Requests.Count);
+        Assert.All(bc.Requests, r => Assert.Equal("custom.example", r.Uri.Host));
+    }
+
     [Fact]
     public async Task Company_Segment_Encoding_Is_Assertable()
     {

@@ -44,10 +44,10 @@ public sealed class FakeBusinessCentral : IDisposable
     private readonly Queue<Func<HttpRequestMessage, HttpResponseMessage>> _scripted = new();
     private readonly List<RecordedBusinessCentralRequest> _requests = [];
     private readonly HttpClient _http;
+    private readonly string _baseAuthority;
 
     private int _tokenRequestCount;
 
-    /// <summary>Fallback host for relative <c>nextLink</c> values.</summary>
     private const string DefaultBaseUrl = "https://bc.test";
 
     /// <summary>Creates a fake with test defaults; <paramref name="configure"/> overrides them.</summary>
@@ -76,6 +76,13 @@ public sealed class FakeBusinessCentral : IDisposable
         };
 
         configure?.Invoke(options);
+
+        // Relative nextLink values resolve against the configured base, so overriding
+        // BaseUrl keeps request capture on one consistent host. Placeholders can only
+        // appear in the path, so the authority parses regardless.
+        _baseAuthority = Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var baseUri)
+            ? baseUri.GetLeftPart(UriPartial.Authority)
+            : DefaultBaseUrl;
 
         Handler = new ScriptedHandler(this);
         _http = new HttpClient(Handler);
@@ -113,7 +120,7 @@ public sealed class FakeBusinessCentral : IDisposable
     /// <param name="entities">Rows in this page, serialized with the client's JSON options.</param>
     /// <param name="nextLink">
     /// Continuation URL for <c>@odata.nextLink</c>. A relative value is made absolute
-    /// against the fake host, so <c>"page2"</c> works.
+    /// against the configured base URL's host, so <c>"page2"</c> works.
     /// </param>
     /// <param name="totalCount">Value for <c>@odata.count</c>, when the page carries one.</param>
     public FakeBusinessCentral EnqueuePage<TEntity>(
@@ -212,10 +219,10 @@ public sealed class FakeBusinessCentral : IDisposable
     /// <inheritdoc />
     public void Dispose() => _http.Dispose();
 
-    private static string MakeAbsolute(string nextLink) =>
+    private string MakeAbsolute(string nextLink) =>
         Uri.TryCreate(nextLink, UriKind.Absolute, out _)
             ? nextLink
-            : $"{DefaultBaseUrl}/{nextLink.TrimStart('/')}";
+            : $"{_baseAuthority}/{nextLink.TrimStart('/')}";
 
     /// <summary>
     /// The client sends exactly one form-urlencoded POST: the client-credentials grant.
