@@ -78,8 +78,18 @@ public sealed class SalesOrder
     public string No { get; set; } = "";
     public string Status { get; set; } = "";
     public decimal Amount { get; set; }
+
+    // BC Edm.Date fields are date-only on the wire ("2026-10-28"), and unset dates come
+    // back as "0001-01-01" — map them to DateOnly. A bare DateTimeOffset property fails
+    // deserialization on EVERY row, populated or not, because neither form carries a time.
+    public DateOnly PostingDate { get; set; }
 }
 ```
+
+> **Dates:** Business Central date fields are `Edm.Date` — always date-only, never
+> timestamps. Model them as `DateOnly` (`System.Text.Json` reads both real dates and the
+> `0001-01-01` unset sentinel natively). Datetime fields (`lastModifiedDateTime` and
+> friends) are `Edm.DateTimeOffset` and map to `DateTimeOffset` as usual.
 
 # 🔍 Querying
 
@@ -242,6 +252,11 @@ is safe.
 > Combining filters on different fields with `.Or(...)` — `field1 eq 1 or field2 eq 2` —
 > has no AL filter equivalent and the server rejects it. `.And(...)` has no such
 > restriction.
+
+> **Null means blank on text fields:** AL text fields cannot be null — an unset field is an
+> empty string, and Business Central maps `eq null` onto "is blank". `Filter.IsNull` on a
+> text field therefore matches empty strings, and `Filter.IsNotNull` *excludes* them —
+> unlike the equivalent LINQ predicate. Verified against a live tenant.
 
 ## Field names without the builder
 

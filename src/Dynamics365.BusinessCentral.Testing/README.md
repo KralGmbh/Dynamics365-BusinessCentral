@@ -45,6 +45,18 @@ Failure scripting means `catch` branches are testable without constructing excep
 by hand — the real `BusinessCentralExceptionFactory` maps the scripted status code to the
 right `BusinessCentralException` subtype.
 
+## What this can and cannot prove
+
+`FakeBusinessCentral` proves **your half** of the contract: that your code produces the
+OData you intend. It cannot prove **Business Central's half** — that the server accepts it.
+A real example from a production consumer: a test asserting
+`$filter=no in ('EBH100','EBT200')` passed, while the live tenant rejected that exact
+filter with `BadRequest_MethodNotImplemented`, because BC does not support the `in`
+operator without `$schemaversion=2.1`. The fake answers whatever it is scripted to answer.
+
+Treat wire-level compatibility as a separate concern: verify operators against a live
+tenant once, then let these tests guard against regressions in what you *generate*.
+
 ## Assertions
 
 `Requests` records every data request in order: `Method`, `Uri`, `Body`, `PathAndQuery`
