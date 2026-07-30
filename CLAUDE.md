@@ -28,7 +28,7 @@ dotnet test Dynamics365.BusinessCentral.slnx -f net10.0
 dotnet test -f net10.0 --filter "FullyQualifiedName~ClientTests.QueryAll_Pages_Until_Short_Page"
 dotnet test -f net10.0 --filter "FullyQualifiedName~ObserverTests"
 
-dotnet pack -c Release          # produces .nupkg + .snupkg
+dotnet pack -c Release          # packs BOTH packages (main + Testing), .nupkg + .snupkg each
 ```
 
 CI: `.github/workflows/sonar.yml` builds + tests on net8.0 and runs SonarCloud on every push/PR to `master`. `.github/workflows/nuget.yml` packs and pushes to NuGet on published GitHub releases — bump `<Version>` in the csproj before tagging.
@@ -118,7 +118,7 @@ The typed client uses the explicit-factory overload of `AddHttpClient`, not `Act
 
 ## Tests
 
-`test/Dynamics365.BusinessCentral.Tests/` — 121 xUnit facts, no mocking library. The csproj has `InternalsVisibleTo`, so internal types are directly testable. Suites: `ClientTests` (path-based API), `QueryBuilderTests` (fluent/typed), `RetryTests`, `OptionsTests`, `ObserverTests`, `ServiceCollectionExtensionsTests`.
+`test/Dynamics365.BusinessCentral.Tests/` — ~240 xUnit facts, no mocking library. The csproj has `InternalsVisibleTo`, so internal types are directly testable. Suites: `ClientTests` (path-based API, `partial`, split by `#region`), `QueryBuilderTests` (fluent/typed), `RetryTests` (incl. token acquisition and network failures), `RetryDelayTests` (jitter contract), `TokenProviderTests` (CAS invalidation), `FilterFormatTests` (OData literals), `DefaultInterfaceTests` (the fakes-keep-compiling contract), `ExceptionPredicateTests`, `BusinessCentralFieldTests`, `FakeBusinessCentralTests` (the Testing package's contract), plus `OptionsTests`, `ObserverTests`, `PagingGuardTests`, `RequestReplayTests`, `WriteOverloadTests`, `ServiceCollectionExtensionsTests`.
 
 Pattern: `TestBase.CreateClient(handler, observer?, configure?)` builds a real `BusinessCentralClient` over `FakeHttpHandler`, a `HttpMessageHandler` driven by a `Func<HttpRequestMessage, HttpResponseMessage>`. **Every handler must answer the token request first** — wrap it in `TestBase.WithToken(...)`, which does that for you, rather than repeating the `Contains("auth")` branch. `TestBase.Json(body)` is the 200-response shorthand. Test entity types live in `Utils/`; `SalesOrder` is the annotated one used for typed-query tests.
 
@@ -126,7 +126,9 @@ Pattern: `TestBase.CreateClient(handler, observer?, configure?)` builds a real `
 
 ## Docs
 
-`README.md` and `src/Dynamics365.BusinessCentral/README.md` are identical except for one line: the root file links `MIGRATION.md` relatively, the packed copy uses an absolute GitHub URL because relative links don't resolve on nuget.org. Update both together when public API changes.
+`README.md` and `src/Dynamics365.BusinessCentral/README.md` are identical except for one line: the root file links `MIGRATION.md` relatively, the packed copy uses an absolute GitHub URL because relative links don't resolve on nuget.org. Update both together when public API changes. A third README, `src/Dynamics365.BusinessCentral.Testing/README.md`, ships in the Testing package — update it when the fake's API changes.
+
+Releasing bumps `<Version>` in **both** csprojs — the packages are versioned in lockstep, and the Testing package's dependency on the main package comes from its `ProjectReference`, so a mismatched bump publishes a dangling dependency.
 
 Three release docs, each with a distinct job — don't merge them:
 

@@ -7,7 +7,7 @@
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>2.0.0-alpha.2</Version>
+        <Version>2.0.0-alpha.3</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
 
@@ -35,16 +35,15 @@
         <!-- Shown on the nuget.org package page. Kept short and pointed at CHANGELOG.md
              rather than duplicated, since nuget.org renders this as plain text. -->
         <PackageReleaseNotes>
-            PRERELEASE — 2.0.0-alpha.2 is the release candidate for 2.0.0 stable, published
-            for validation against real Business Central environments.
+            PRERELEASE — 2.0.0-alpha.3 is the final validation build before 2.0.0 stable.
 
-            On top of 2.0.0-alpha: date/time filter literals fixed (DateOnly, TimeOnly,
-            kindless DateTime), network failures retried and surfaced as
-            BusinessCentralConnectionException, WithTop honoured as a result cap when
-            auto-paging, single-entity GetAsync/FirstOrDefaultAsync, default interface
-            methods so test fakes keep compiling, public HttpClient names for resilience
-            composition, exception predicates (IsNotFound etc.), and typed field-name
-            resolution for the path-based API.
+            On top of 2.0.0-alpha.2: token acquisition now retries transient failures under
+            the same rules as data requests, retry delays are jittered (Retry.JitterFactor)
+            so concurrent callers stop retrying in lockstep, concurrent 401s no longer
+            cascade token refreshes, and $expand encoding handles unsafe characters.
+
+            New companion package: Dynamics365.BusinessCentral.Testing — script responses,
+            run a real client, and assert the exact OData your code produces.
 
             Breaking changes — see the migration guide before upgrading:
             https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/MIGRATION.md

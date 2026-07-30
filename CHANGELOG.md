@@ -7,6 +7,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0-alpha.3] - 2026-07-30
+
+**Prerelease.** The final validation build before 2.0.0 stable: robustness fixes from a
+second production-consumer review of the client internals, plus the companion testing
+package. Still to be confirmed against a live tenant before stable: the *Unverified* list
+under [2.0.0-alpha], plus a smoke test of a date filter.
+
 ### Added
 
 - **`Dynamics365.BusinessCentral.Testing`**, a companion NuGet package. `FakeBusinessCentral`
