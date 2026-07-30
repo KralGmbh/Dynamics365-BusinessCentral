@@ -26,9 +26,6 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     private const string BearerScheme = "Bearer";
     private const string IfMatchHeader = "If-Match";
 
-    /// <summary>Default page size used when auto-paging.</summary>
-    private const int DefaultPageSize = 1000;
-
     private static readonly JsonSerializerOptions _jsonOptions = BusinessCentralJson.Options;
 
     /// <summary>Creates a client for the company configured in <paramref name="options"/>.</summary>
@@ -232,89 +229,23 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         var baseOptions = new QueryOptions();
         options?.Invoke(baseOptions);
 
-        // Top is a result cap, exactly as documented on WithTop; PageSize sizes the round
-        // trips. This mirrors BusinessCentralQuery<T>.StreamAsync — the two implementations
-        // must stay in agreement.
-        var limit = baseOptions.Top;
-
-        // $top=0 is a request for no rows at all.
-        if (limit == 0)
-            yield break;
-
-        var pageSize = baseOptions.PageSize ?? DefaultPageSize;
-
-        // Guards the loop below: with a non-positive page size the "short page" termination
-        // check can never fire, so it would request the same empty page forever. The public
-        // setters reject these values; this covers the internal ones.
-        if (pageSize <= 0)
-            yield break;
-
         var filterValue = filter?.Value ?? string.Empty;
 
-        // Honour a caller-supplied $skip as the starting offset instead of silently
-        // restarting from the first page.
-        var skip = baseOptions.Skip ?? 0;
-        var emitted = 0;
+        // Top is a result cap, exactly as documented on WithTop; PageSize sizes the round
+        // trips. The paging state machine itself lives in QueryPager, shared with the
+        // fluent builder. baseOptions.Skip is honoured as the starting offset instead of
+        // silently restarting from the first page.
+        var stream = QueryPager.StreamAsync(
+            baseOptions.Top,
+            baseOptions.PageSize ?? QueryPager.DefaultPageSize,
+            baseOptions.Skip ?? 0,
+            (top, skip, ct) => FetchPageAsync<TEntity>(
+                path, filterValue, PageOptions(baseOptions, top, skip), select, ct),
+            FetchNextPageAsync<TEntity>,
+            cancellationToken);
 
-        var requested = NextTop(pageSize, limit, emitted);
-
-        var page = await FetchPageAsync<TEntity>(
-                path, filterValue, PageOptions(baseOptions, requested, skip), select, cancellationToken)
-            .ConfigureAwait(false);
-
-        var serverDriven = false;
-
-        while (true)
-        {
-            var inPage = 0;
-
-            foreach (var entity in page.Value)
-            {
-                yield return entity;
-
-                emitted++;
-                inPage++;
-
-                if (limit is { } cap && emitted >= cap)
-                    yield break;
-            }
-
-            // Server-driven paging wins: when Business Central sends @odata.nextLink it
-            // decides the page size, so a short page is not the end of the collection.
-            if (!string.IsNullOrWhiteSpace(page.NextLink))
-            {
-                serverDriven = true;
-
-                page = await FetchNextPageAsync<TEntity>(page.NextLink, cancellationToken)
-                    .ConfigureAwait(false);
-
-                continue;
-            }
-
-            if (serverDriven)
-                yield break;
-
-            // No nextLink and a short page means the collection is exhausted.
-            if (inPage < requested)
-                yield break;
-
-            skip += inPage;
-            requested = NextTop(pageSize, limit, emitted);
-
-            page = await FetchPageAsync<TEntity>(
-                    path, filterValue, PageOptions(baseOptions, requested, skip), select, cancellationToken)
-                .ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>Page size for the next request, never overshooting a caller-set <c>$top</c>.</summary>
-    private static int NextTop(int pageSize, int? limit, int emitted)
-    {
-        if (limit is not { } cap)
-            return pageSize;
-
-        var remaining = cap - emitted;
-        return remaining < pageSize ? remaining : pageSize;
+        await foreach (var entity in stream.ConfigureAwait(false))
+            yield return entity;
     }
 
     private static QueryOptions PageOptions(QueryOptions baseOptions, int top, int skip)
@@ -669,7 +600,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
                 {
                     res = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
                 }
-                catch (Exception ex) when (IsNetworkFailure(ex, cancellationToken))
+                catch (Exception ex) when (RetryHelper.IsNetworkFailure(ex, cancellationToken))
                 {
                     stopwatch.Stop();
 
@@ -678,7 +609,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
                     // the request reached the server is as ambiguous as a 502/504, so the
                     // same replay rules apply (IsSafeToReplay holds a POST back).
                     var failure = new BusinessCentralConnectionException(
-                        NetworkFailureMessage(ex), method.Method, url, ex);
+                        RetryHelper.NetworkFailureMessage(ex, "Business Central"), method.Method, url, ex);
 
                     _observer.OnRequestFailed(new BusinessCentralErrorInfo
                     {
@@ -693,7 +624,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
                     {
                         transientAttempt++;
 
-                        var delay = ComputeDelay(retry, null, transientAttempt);
+                        var delay = RetryHelper.ComputeDelay(retry, null, transientAttempt);
 
                         _observer.OnRequestRetrying(new BusinessCentralRetryInfo
                         {
@@ -738,7 +669,9 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
                         Exception = new UnauthorizedAccessException("Unauthorized – retrying with refreshed token")
                     });
 
-                    await _tokenProvider.InvalidateAsync(cancellationToken).ConfigureAwait(false);
+                    // Pass the token this attempt actually used: a straggler must not clear
+                    // a token that was already refreshed by someone else.
+                    await _tokenProvider.InvalidateAsync(token, cancellationToken).ConfigureAwait(false);
 
                     request = Replace(res, request, createRequest);
                     continue;
@@ -765,7 +698,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
                         transientAttempt++;
 
                         var fromRetryAfter = retry.HonorRetryAfter && failure.RetryAfter != null;
-                        var delay = ComputeDelay(retry, failure.RetryAfter, transientAttempt);
+                        var delay = RetryHelper.ComputeDelay(retry, failure.RetryAfter, transientAttempt);
 
                         _observer.OnRequestRetrying(new BusinessCentralRetryInfo
                         {
@@ -842,20 +775,6 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     }
 
     /// <summary>
-    /// Whether the send failed without any response arriving: a connection-level error, or
-    /// the <see cref="HttpClient"/> timeout. A cancellation requested through the caller's
-    /// token is not a network failure and propagates as-is.
-    /// </summary>
-    private static bool IsNetworkFailure(Exception ex, CancellationToken cancellationToken) =>
-        ex is HttpRequestException ||
-        (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested);
-
-    private static string NetworkFailureMessage(Exception ex) =>
-        ex is TaskCanceledException
-            ? "The request timed out before Business Central responded."
-            : $"The connection to Business Central failed: {ex.Message}";
-
-    /// <summary>
     /// Whether this failure may be retried by replaying the same request.
     /// </summary>
     /// <remarks>
@@ -894,42 +813,6 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             return false;
 
         return true;
-    }
-
-    /// <summary>
-    /// A server-supplied <c>Retry-After</c> wins over computed backoff; otherwise the delay
-    /// doubles per attempt. Both are capped by <see cref="BusinessCentralRetryOptions.MaxDelay"/>.
-    /// </summary>
-    private static TimeSpan ComputeDelay(
-        BusinessCentralRetryOptions retry,
-        TimeSpan? retryAfter,
-        int attempt)
-    {
-        var max = Floor(retry.MaxDelay);
-
-        if (retry.HonorRetryAfter && retryAfter is { } requested)
-            return Clamp(requested, max);
-
-        var milliseconds = Floor(retry.BaseDelay).TotalMilliseconds * Math.Pow(2, attempt - 1);
-
-        // A large BaseDelay or a high attempt count overflows to a value TimeSpan cannot
-        // represent — or to Infinity — and TimeSpan.FromMilliseconds throws on both. Compare
-        // in double space first so a transient failure never becomes a crash.
-        if (double.IsNaN(milliseconds) || milliseconds >= max.TotalMilliseconds)
-            return max;
-
-        return Clamp(TimeSpan.FromMilliseconds(milliseconds), max);
-    }
-
-    private static TimeSpan Floor(TimeSpan value) =>
-        value < TimeSpan.Zero ? TimeSpan.Zero : value;
-
-    private static TimeSpan Clamp(TimeSpan value, TimeSpan max)
-    {
-        if (value < TimeSpan.Zero)
-            return TimeSpan.Zero;
-
-        return value > max ? max : value;
     }
 
     private static async Task<string?> ReadBodySafeAsync(

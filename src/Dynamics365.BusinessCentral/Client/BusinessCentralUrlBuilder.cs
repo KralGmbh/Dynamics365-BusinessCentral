@@ -75,8 +75,8 @@ internal sealed class BusinessCentralUrlBuilder
 
         var query = new List<string>();
 
-        // Filter
-        if (!string.IsNullOrWhiteSpace(filter) && filter != "true")
+        // Filter — ODataFilter.MatchAll ("match every row") is emitted as no $filter at all.
+        if (!string.IsNullOrWhiteSpace(filter) && filter != ODataFilter.MatchAll)
         {
             query.Add("$filter=" + Uri.EscapeDataString(filter));
         }
@@ -112,11 +112,12 @@ internal sealed class BusinessCentralUrlBuilder
             query.Add("$orderby=" + Uri.EscapeDataString(options.OrderBy));
         }
 
-        // Expand — joined verbatim so nested syntax such as
-        // "salesOrderLines($select=lineNo)" survives.
+        // Expand — selectively encoded so nested syntax such as
+        // "salesOrderLines($select=lineNo)" survives while unsafe characters
+        // ('&', '#', '+', space, …) are still escaped.
         if (options.Expand.Count > 0)
         {
-            query.Add("$expand=" + string.Join(",", options.Expand).Replace(" ", "%20"));
+            query.Add("$expand=" + string.Join(",", options.Expand.Select(EncodeExpand)));
         }
 
         // Count
@@ -163,39 +164,59 @@ internal sealed class BusinessCentralUrlBuilder
     /// so alternate keys such as <c>No='1000'</c> survive intact, while spaces and other
     /// unsafe characters are still percent-encoded.
     /// </summary>
-    private static string EncodeKey(string key)
-    {
-        if (string.IsNullOrEmpty(key))
-            return key;
+    private static string EncodeKey(string key) => EncodeSelectively(key, IsKeySafe);
 
-        var result = new StringBuilder(key.Length);
+    /// <summary>
+    /// Encodes an <c>$expand</c> clause. Expand syntax needs its structural characters —
+    /// parentheses, '$', '=', ',', ';', '/', quotes and '*' — preserved, so wholesale
+    /// escaping is impossible; everything else ('&amp;', '#', '+', space, …) is
+    /// percent-encoded so a value inside a nested <c>$filter</c> cannot break the URL.
+    /// </summary>
+    private static string EncodeExpand(string expand) => EncodeSelectively(expand, IsExpandSafe);
+
+    /// <summary>
+    /// Percent-encodes every character <paramref name="isSafe"/> rejects, leaving the rest
+    /// literal. Unsafe characters are escaped a whole run at a time so surrogate pairs are
+    /// never split across two <see cref="Uri.EscapeDataString(string)"/> calls.
+    /// </summary>
+    private static string EncodeSelectively(string value, Func<char, bool> isSafe)
+    {
+        if (string.IsNullOrEmpty(value))
+            return value;
+
+        var result = new StringBuilder(value.Length);
         var i = 0;
 
-        while (i < key.Length)
+        while (i < value.Length)
         {
-            if (IsKeySafe(key[i]))
+            if (isSafe(value[i]))
             {
-                result.Append(key[i]);
+                result.Append(value[i]);
                 i++;
                 continue;
             }
 
-            // Escape a whole run at once so surrogate pairs are never split
-            // across two EscapeDataString calls.
             var start = i;
-            while (i < key.Length && !IsKeySafe(key[i]))
+            while (i < value.Length && !isSafe(value[i]))
                 i++;
 
-            result.Append(Uri.EscapeDataString(key[start..i]));
+            result.Append(Uri.EscapeDataString(value[start..i]));
         }
 
         return result.ToString();
     }
 
     private static bool IsKeySafe(char c) =>
+        IsUnreserved(c) ||
+        c is '\'' or '=' or ',' or '(' or ')';
+
+    private static bool IsExpandSafe(char c) =>
+        IsUnreserved(c) ||
+        c is '\'' or '=' or ',' or '(' or ')' or '$' or ';' or '/' or '*';
+
+    private static bool IsUnreserved(char c) =>
         c is >= 'A' and <= 'Z' ||
         c is >= 'a' and <= 'z' ||
         c is >= '0' and <= '9' ||
-        c is '-' or '.' or '_' or '~' ||
-        c is '\'' or '=' or ',' or '(' or ')';
+        c is '-' or '.' or '_' or '~';
 }

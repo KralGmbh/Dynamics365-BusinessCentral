@@ -256,6 +256,9 @@ var lines = await client.QueryAsync<ProdOrderLine>(
 
 Business Central throttles aggressively. Throttled (`429`) and transient (`408`, `502`,
 `503`, `504`) responses are retried automatically, honouring `Retry-After` when present.
+Delays are jittered (`Retry.JitterFactor`, default `0.2`) so concurrent callers do not
+retry in lockstep — the spread is only ever added, never subtracted from a `Retry-After`.
+Token acquisition follows the same retry options; bad credentials are not retried.
 
 ```csharp
 services.AddBusinessCentral(options =>
@@ -306,6 +309,9 @@ by name:
 services.AddHttpClient(BusinessCentralHttpClients.Client).RemoveAllResilienceHandlers();
 services.AddHttpClient(BusinessCentralHttpClients.Token).RemoveAllResilienceHandlers();
 ```
+
+Exempting the token client is safe: token acquisition has its own retry under the same
+`Retry` options, so removing the outer handler does not leave it bare.
 
 Disabling the package's retry instead (`options.Retry.Enabled = false`) also resolves the
 composition, but leaves the generic outer handler in charge — including its unsafe `POST`

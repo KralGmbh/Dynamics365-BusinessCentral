@@ -134,7 +134,7 @@ public static class Filter
         IsNotNull(PropertyPath.Resolve(field));
 
     /// <summary>A filter that matches every row. Emitted as no <c>$filter</c> at all.</summary>
-    public static ODataFilter All => new("true");
+    public static ODataFilter All => new(ODataFilter.MatchAll);
 
     /// <summary>A filter that matches nothing.</summary>
     public static ODataFilter None => new("false");
