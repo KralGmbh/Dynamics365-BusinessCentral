@@ -10,6 +10,7 @@ jobs:
 
     permissions:
       contents: write   # needed to upload artifacts to the release
+      id-token: write   # needed for NuGet Trusted Publishing (OIDC)
 
     steps:
       - uses: actions/checkout@v4
@@ -26,11 +27,22 @@ jobs:
 
       - run: dotnet pack -c Release --no-build
 
+      # Trusted Publishing: exchanges this workflow's OIDC token for a short-lived
+      # API key under the nuget.org policy (owner daru → this repo + workflow file).
+      # No long-lived secret to scope, rotate or leak — and new package IDs owned by
+      # the same account publish without key changes, which is exactly what broke
+      # the first two-package release under the old scoped NUGET_API_KEY.
+      - name: NuGet login (Trusted Publishing)
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: daru
+
       - name: Push to NuGet
         run: |
           dotnet nuget push **/*.nupkg \
             --source https://api.nuget.org/v3/index.json \
-            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} \
             --skip-duplicate
 
       - name: Upload nupkg to GitHub Release
