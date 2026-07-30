@@ -119,6 +119,26 @@ It now follows `@odata.nextLink`. Where Business Central applied a server-side p
 below the requested `$top`, 1.0 stopped early and silently truncated. Reconciliation logic
 that assumed the old result size should be re-checked.
 
+### Auto-paging is server-driven
+
+1.0 (and the 2.0 alphas) paced streaming reads by sending `$top`/`$skip` per round trip.
+2.0 stable sends **no page size by default**: Business Central pages at its own configured
+Max Page Size (20,000 online; the `ODataServicesMaxPageSize` server setting on-premises)
+and drives continuation via `@odata.nextLink`, an opaque `$skiptoken` cursor — verified
+against a live SaaS tenant.
+
+What this changes in practice:
+
+- **Fewer, larger responses.** A full sweep of a 118k-row entity set drops from 119
+  round trips (at the old invented default of 1,000) to 6 — but each response is up to
+  20,000 rows. If per-response size matters (memory, timeouts), set
+  `BusinessCentralOptions.MaxPageSize` or a per-query `WithPageSize(n)`; the value is sent
+  as `Prefer: odata.maxpagesize` and clamped by the server.
+- **No more offset paging.** `$skip` no longer advances between pages, so concurrent
+  inserts/deletes can no longer shift rows between requests. A caller-set `WithSkip(n)` is
+  still honoured — as the starting offset of the first request.
+- **`WithTop` is unchanged**: a pure result cap, sent as `$top` and enforced client-side.
+
 ### `QueryAllAsync` with `WithTop` may return far fewer rows
 
 The opposite direction: `WithTop(n)` was 1.0's page size and did not limit results; it is
@@ -167,7 +187,9 @@ If you built workarounds for either, remove them.
 In 1.0's `QueryAllAsync`, `WithTop(n)` meant *page size*, not a result limit — it paged
 through the entire collection `n` rows at a time. In 2.0 `WithTop` is what it says: a
 result cap, everywhere. `QueryAllAsync(..., o => o.WithTop(10))` now returns at most 10
-rows. Use `WithPageSize(n)` for the old meaning:
+rows. Use `WithPageSize(n)` for the old intent — though the mechanism differs: it now
+requests server pages of at most `n` rows via `Prefer: odata.maxpagesize` rather than
+issuing `$top=n` round trips (see *Auto-paging is server-driven* in §2):
 
 ```csharp
 // 1.0: WithTop(500) fetched everything, 500 rows per round trip. 2.0 equivalent:

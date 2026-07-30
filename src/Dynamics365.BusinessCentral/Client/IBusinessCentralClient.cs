@@ -143,7 +143,10 @@ public interface IBusinessCentralClient
     /// <typeparam name="TEntity">The entity type to deserialize the OData result into.</typeparam>
     /// <param name="path">Relative OData entity path.</param>
     /// <param name="filter">Optional strongly-typed OData filter expression.</param>
-    /// <param name="options">Optional query options; use <c>WithPageSize</c> to size each round trip.</param>
+    /// <param name="options">
+    /// Optional query options. Paging is server-driven via <c>@odata.nextLink</c>; use
+    /// <c>WithPageSize</c> to request smaller pages (<c>Prefer: odata.maxpagesize</c>).
+    /// </param>
     /// <param name="select">Optional list of fields to select.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task<List<TEntity>> QueryAllAsync<TEntity>(
@@ -161,7 +164,10 @@ public interface IBusinessCentralClient
     /// <typeparam name="TEntity">The entity type to deserialize the OData result into.</typeparam>
     /// <param name="path">Relative OData entity path.</param>
     /// <param name="filter">Optional strongly-typed OData filter expression.</param>
-    /// <param name="options">Optional query options; use <c>WithPageSize</c> to size each round trip.</param>
+    /// <param name="options">
+    /// Optional query options. Paging is server-driven via <c>@odata.nextLink</c>; use
+    /// <c>WithPageSize</c> to request smaller pages (<c>Prefer: odata.maxpagesize</c>).
+    /// </param>
     /// <param name="select">Optional list of fields to select.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     IAsyncEnumerable<TEntity> QueryStreamAsync<TEntity>(

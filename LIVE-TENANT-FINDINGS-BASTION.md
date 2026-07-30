@@ -10,6 +10,10 @@ real tenant, and one finding contradicts a proposal I made in round one.
 
 Self-contained: no access to the consumer codebase required.
 
+**Superseded in part.** [NEXTLINK-FINDINGS-BASTION.md](NEXTLINK-FINDINGS-BASTION.md) (round
+four) closes this round's open `@odata.nextLink` item and corrects the conclusion recorded for
+it under *Still open* below.
+
 ---
 
 ## Summary
@@ -42,7 +46,7 @@ Every row below was executed against the live tenant on `LDATItems` unless noted
 | `$orderby` + `$skip` | `OrderBy*`, `WithSkip` | ✅ works |
 | `$select` | `select:` / `.Select(...)` | ✅ works |
 | **`in`** | **`Filter.In`** | ❌ **`BadRequest_MethodNotImplemented`** |
-| Server-driven paging | `QueryAllAsync` nextLink following | ⚠️ inconclusive — see *Still open* |
+| Server-driven paging | `QueryAllAsync` nextLink following | ✅ supported — measured in [round four](NEXTLINK-FINDINGS-BASTION.md), gated on Max Page Size |
 
 `NotEquals`, `GreaterThan`, `LessThan`, `LessOrEqual` and `EndsWith` were not measured, but
 the operators that were all behave as standard OData v4, so `in` looks like the outlier
@@ -296,7 +300,7 @@ No change required. The Unverified entry can be struck.
 
 | Item | Status |
 | --- | --- |
-| Server-driven `@odata.nextLink` paging | **Inconclusive.** An unbounded query over 118,133 rows did not produce the expected paging behaviour; the consumer's read is that these published-page web-service endpoints (`LDAT*`) may not do server-driven paging at all, unlike the `/api/v2.0` endpoints. Needs a precise capture of the response before any conclusion. **This is the item that silently truncated in 1.x and it is still the least-understood behaviour in the package.** |
+| Server-driven `@odata.nextLink` paging | **Closed — superseded by [NEXTLINK-FINDINGS-BASTION.md](NEXTLINK-FINDINGS-BASTION.md) (round four).** The read recorded here — that the `LDAT*` published-page endpoints may not do server-driven paging at all — was **wrong**; they do. The behaviour is gated on Business Central's **Max Page Size** (20,000 on this tenant), and the package's own default `$top` of 1,000 sits below it, so no nextLink was ever offered. See round four for the measurements and the resulting proposal. |
 | `Prefer: return=representation` | Deliberately unverified — confirming it requires a real write to a production tenant. Better documented as unverified than tested by creating a live record. |
 
 **Recommendation:** given L1, treat every `Filter.*` operator as unverified until measured. The

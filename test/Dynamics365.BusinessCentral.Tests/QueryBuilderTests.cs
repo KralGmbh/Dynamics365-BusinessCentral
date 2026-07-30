@@ -235,7 +235,8 @@ public class QueryBuilderTests
         var client = TestBase.CreateClient(TestBase.WithToken(_ =>
         {
             requests++;
-            return TestBase.Json("{\"value\":[{\"no\":\"a\"},{\"no\":\"b\"}]}");
+            return TestBase.Json(
+                $"{{\"value\":[{{\"no\":\"a{requests}\"}},{{\"no\":\"b{requests}\"}}],\"@odata.nextLink\":\"https://test/p{requests + 1}\"}}");
         }));
 
         var seen = new List<string>();
@@ -256,8 +257,15 @@ public class QueryBuilderTests
     [Fact]
     public async Task Top_Caps_Results_Across_Pages()
     {
+        var call = 0;
+
         var client = TestBase.CreateClient(TestBase.WithToken(_ =>
-            TestBase.Json("{\"value\":[{\"no\":\"a\"},{\"no\":\"b\"}]}")));
+        {
+            call++;
+            return TestBase.Json(call == 1
+                ? "{\"value\":[{\"no\":\"a\"},{\"no\":\"b\"}],\"@odata.nextLink\":\"https://test/p2\"}"
+                : "{\"value\":[{\"no\":\"c\"},{\"no\":\"d\"}]}");
+        }));
 
         var all = await client.Query<SalesOrder>().PageSize(2).Top(3).ToAllAsync();
 

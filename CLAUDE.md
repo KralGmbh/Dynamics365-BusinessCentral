@@ -53,7 +53,9 @@ Everything funnels through `BusinessCentralClient.SendWithAuthRetryAsync`, a sin
 
 `IsSafeToReplay` encodes a deliberate asymmetry: a `429` is rejected *before* processing so it is always replayable, but `408/502/503/504` are ambiguous — the write may already have landed. A `POST` is therefore not replayed on those unless `Retry.RetryPostOnTransientFailures` is set, because a duplicate row is worse than a surfaced error. `GET`/`PUT`/`DELETE` are idempotent and always retried. Don't "simplify" this back to a plain `IsTransient` check.
 
-Each attempt clones the request (`HttpRequestExtensions.Clone`, because a sent `HttpRequestMessage` can't be reused). A failure is reported to the observer exactly once — the throw site sets `failureReported` so the catch-all doesn't double-report.
+Each attempt builds a fresh request via the `createRequest` factory passed to `SendWithAuthRetryAsync` (a sent `HttpRequestMessage` can't be reused). A failure is reported to the observer exactly once — the throw site sets `failureReported` so the catch-all doesn't double-report — and a caller-requested cancellation is not reported at all. Observers are wrapped in `SafeBusinessCentralObserver` (`Diagnostics/`), which swallows callback exceptions: diagnostics must never break the pipeline, so never call a consumer observer directly.
+
+Responses are **deliberately buffered as strings** before deserialization: the raw body on `BusinessCentralException.ResponseBody` and in `OnDeserializationFailed` is the package's most valuable field diagnostic (a consumer debugged a prod deserialization failure from a single log line). Under server-driven paging the default page can be 20k rows, so this costs memory — `BusinessCentralOptions.MaxPageSize` is the documented knob. Don't switch to stream deserialization without solving the lost-body diagnostics.
 
 Tests must set `Retry.BaseDelay`/`MaxDelay` to zero or they sleep; `TestBase.CreateClient` already does.
 
@@ -89,13 +91,9 @@ Note the quirk in `BuildQueryUrl`: a filter string of `"true"` is treated as "no
 
 ### Paging
 
-The auto-paging state machine lives **once**, in `QueryPager` (internal, `OData/`); both public entry points — `BusinessCentralClient.QueryStreamAsync` (path-based) and `BusinessCentralQuery<T>.StreamAsync` (fluent) — delegate to it and differ only in their fetch delegates. Termination is three-tier:
+The auto-paging state machine lives **once**, in `QueryPager` (internal, `OData/`); both public entry points — `BusinessCentralClient.QueryStreamAsync` (path-based) and `BusinessCentralQuery<T>.StreamAsync` (fluent) — delegate to it and differ only in their fetch delegates. Paging is **server-driven** (measured against a live BC SaaS tenant — see `NEXTLINK-FINDINGS-BASTION.md`): the first request carries `$top` only when the caller set a result cap and `$skip` only when they set an offset; the resolved page preference (`QueryOptions.PageSize ?? BusinessCentralOptions.MaxPageSize ?? nothing`) is sent as `Prefer: odata.maxpagesize` on the first request **and every continuation** (the preference is per request, not per cursor); the server pages at its own Max Page Size otherwise. Termination: no `@odata.nextLink` means done — either the server served everything or the `$top` budget is satisfied. There is no `$skip` loop and no package page-size constant; don't reintroduce either. Single-page reads (`QueryAsync`, `ToListAsync`, `GetAsync`, …) pass a null preference on purpose — `odata.maxpagesize` on a one-shot request silently truncates it.
 
-1. Follow `@odata.nextLink` whenever present, and set `serverDriven`.
-2. Once `serverDriven`, a missing nextLink means the collection is exhausted — the `$top` short-page rule no longer applies.
-3. Otherwise stop on the first page shorter than the requested size.
-
-`QueryOptions.PageSize` is rows-per-round-trip; `Top` is a result cap. `QueryPager` sizes each request's `$top` from the remaining cap, so a request never overshoots it. The old `WithTop`-as-page-size behaviour is gone (2.0); `WithPageSize` is the only way to size round trips.
+`QueryOptions.PageSize` is the server-page preference; `Top` is a result cap (sent as `$top`, enforced client-side mid-page). The old `WithTop`-as-page-size behaviour is gone (2.0).
 
 ### Writes
 

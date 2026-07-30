@@ -16,8 +16,11 @@ public sealed class QueryOptions
     public int? Skip { get; internal set; }
 
     /// <summary>
-    /// Rows fetched per request when auto-paging. This is <b>not</b> a result limit —
-    /// use <see cref="WithTop"/> for that.
+    /// Maximum rows per page when auto-paging, requested from the server via
+    /// <c>Prefer: odata.maxpagesize</c>. This is <b>not</b> a result limit — use
+    /// <see cref="WithTop"/> for that. When unset, the server pages at its own configured
+    /// Max Page Size (or the registration-level <c>BusinessCentralOptions.MaxPageSize</c>,
+    /// when that is set).
     /// </summary>
     public int? PageSize { get; internal set; }
 
@@ -62,12 +65,13 @@ public sealed class QueryOptions
     }
 
     /// <summary>
-    /// Sets how many rows are fetched per request when auto-paging. Affects the number of
-    /// round trips, not how many entities come back.
+    /// Requests at most <paramref name="value"/> rows per page when auto-paging, via
+    /// <c>Prefer: odata.maxpagesize</c>. Affects the number of round trips and per-response
+    /// size, not how many entities come back. The server clamps the value to its own
+    /// configured maximum, so this can only ask for <i>smaller</i> pages.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// <paramref name="value"/> is less than 1. A page size of zero would request <c>$top=0</c>
-    /// forever without advancing.
+    /// <paramref name="value"/> is less than 1.
     /// </exception>
     public QueryOptions WithPageSize(int value)
     {
