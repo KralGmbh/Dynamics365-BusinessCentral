@@ -11,13 +11,19 @@ so read that section even if the build is green.
 ### `IBusinessCentralClient` gained members
 
 New members: `Company`, `ForCompany`, `Query<T>()` (two overloads), `QueryStreamAsync<T>`,
-`GetCompaniesAsync`, and two-generic `PostAsync`/`PatchAsync`/`PutAsync`.
+`GetCompaniesAsync`, `GetAsync<T>`, `FirstOrDefaultAsync<T>`, and two-generic
+`PostAsync`/`PatchAsync`/`PutAsync`.
 
 Mocking libraries (Moq, NSubstitute, FakeItEasy) absorb this automatically. Hand-written
 test fakes keep compiling too: **every interface member has a default implementation**, so
 a fake only implements the members it actually exercises. An unimplemented member throws
 `NotSupportedException` naming itself, and `FirstOrDefaultAsync` composes over `QueryAsync`
 so fakes get it for free.
+
+Before extending a hand-written fake, consider the companion package
+`Dynamics365.BusinessCentral.Testing`: its `FakeBusinessCentral` runs a **real** client
+over scripted responses, so tests can assert the exact OData a call produced — the thing
+a fake or mock can never verify. See the README's *Testing* section.
 
 ### Nothing else, in practice
 
@@ -74,7 +80,10 @@ catch (BusinessCentralException ex) { … }          // sees everything
 
 `429`, `408`, `502`, `503` and `504` are now retried (3 attempts by default), honouring
 `Retry-After`. Calls therefore take longer before surfacing a failure, and fewer transient
-errors reach your code.
+errors reach your code. Delays are jittered by default (`Retry.JitterFactor`, `0.2`) so
+concurrent callers do not retry in lockstep — set it to `0` if your tests assert exact
+timings. Token acquisition follows the same retry options; bad credentials (`400`/`401`
+from the token endpoint) are never retried.
 
 **Writes are not blindly replayed.** A `429` is rejected before processing so replay is
 always safe; the others are ambiguous, so a `POST` is *not* retried on them:
