@@ -93,7 +93,7 @@ The auto-paging state machine lives **once**, in `QueryPager` (internal, `OData/
 2. Once `serverDriven`, a missing nextLink means the collection is exhausted — the `$top` short-page rule no longer applies.
 3. Otherwise stop on the first page shorter than the requested size.
 
-`QueryOptions.PageSize` is rows-per-round-trip; `Top` is a result cap. `QueryPager.NextTop(pageSize, limit, emitted)` computes each request's `$top` so a request never overshoots the cap. The old `WithTop`-as-page-size behaviour is gone (2.0); `WithPageSize` is the only way to size round trips.
+`QueryOptions.PageSize` is rows-per-round-trip; `Top` is a result cap. `QueryPager` sizes each request's `$top` from the remaining cap, so a request never overshoots it. The old `WithTop`-as-page-size behaviour is gone (2.0); `WithPageSize` is the only way to size round trips.
 
 ### Writes
 

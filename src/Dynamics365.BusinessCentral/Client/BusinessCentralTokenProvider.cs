@@ -129,7 +129,8 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
                 catch (Exception ex) when (RetryHelper.IsNetworkFailure(ex, cancellationToken))
                 {
                     failure = new BusinessCentralConnectionException(
-                        RetryHelper.NetworkFailureMessage(ex), HttpMethod.Post.Method, endpoint, ex);
+                        RetryHelper.NetworkFailureMessage(ex, "the token endpoint"),
+                        HttpMethod.Post.Method, endpoint, ex);
                 }
 
                 // The client_credentials grant has no side effects, so replay is

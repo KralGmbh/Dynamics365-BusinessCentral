@@ -609,7 +609,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
                     // the request reached the server is as ambiguous as a 502/504, so the
                     // same replay rules apply (IsSafeToReplay holds a POST back).
                     var failure = new BusinessCentralConnectionException(
-                        RetryHelper.NetworkFailureMessage(ex), method.Method, url, ex);
+                        RetryHelper.NetworkFailureMessage(ex, "Business Central"), method.Method, url, ex);
 
                     _observer.OnRequestFailed(new BusinessCentralErrorInfo
                     {

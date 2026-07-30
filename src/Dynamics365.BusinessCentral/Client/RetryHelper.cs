@@ -80,10 +80,16 @@ internal static class RetryHelper
         ex is HttpRequestException ||
         (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested);
 
-    public static string NetworkFailureMessage(Exception ex) =>
+    /// <summary>
+    /// Single-line failure description. <paramref name="target"/> names what was being
+    /// called — "Business Central" for data requests, "the token endpoint" for token
+    /// acquisition — so a connectivity problem at login.microsoftonline.com is not
+    /// misattributed to Business Central itself.
+    /// </summary>
+    public static string NetworkFailureMessage(Exception ex, string target) =>
         ex is TaskCanceledException
-            ? "The request timed out before Business Central responded."
-            : $"The connection to Business Central failed: {ex.Message}";
+            ? $"The request timed out before {target} responded."
+            : $"The connection to {target} failed: {ex.Message}";
 
     private static TimeSpan Floor(TimeSpan value) =>
         value < TimeSpan.Zero ? TimeSpan.Zero : value;
