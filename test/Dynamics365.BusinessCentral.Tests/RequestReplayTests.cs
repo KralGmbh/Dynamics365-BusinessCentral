@@ -223,31 +223,30 @@ public class RequestReplayTests
     }
 
     [Fact]
-    public async Task QueryStreamAsync_Continues_Paging_From_The_Supplied_Skip()
+    public async Task QueryStreamAsync_Sends_The_Supplied_Skip_On_The_First_Request_Only()
     {
-        var skips = new List<string>();
+        var urls = new List<string>();
         var dataCalls = 0;
 
         var client = TestBase.CreateClient(TestBase.WithToken(req =>
         {
-            var query = new Uri(req.RequestUri!.AbsoluteUri).Query;
-            skips.Add(Uri.UnescapeDataString(query));
+            urls.Add(Uri.UnescapeDataString(req.RequestUri!.AbsoluteUri));
 
             dataCalls++;
 
             return dataCalls == 1
-                ? TestBase.Json("{\"value\":[{\"id\":1},{\"id\":2}]}")
-                : TestBase.Json("{\"value\":[]}");
+                ? TestBase.Json("{\"value\":[{\"id\":1},{\"id\":2}],\"@odata.nextLink\":\"https://test/p2\"}")
+                : TestBase.Json("{\"value\":[{\"id\":3}]}");
         }));
 
         var all = await client.QueryAllAsync<TestEntity>(
             "orders", options: o => o.WithPageSize(2).WithSkip(10));
 
-        Assert.Equal(2, all.Count);
-        Assert.Contains("$skip=10", skips[0]);
+        Assert.Equal(3, all.Count);
+        Assert.Contains("$skip=10", urls[0]);
 
-        // Second page continues from the offset rather than restarting.
-        Assert.Contains("$skip=12", skips[1]);
+        // Continuation is the server's cursor, not a client-computed offset.
+        Assert.Equal("https://test/p2", urls[1]);
     }
 
     #endregion

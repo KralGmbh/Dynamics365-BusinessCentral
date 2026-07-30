@@ -28,6 +28,9 @@ internal sealed class BusinessCentralOptionsValidator : IValidateOptions<Busines
         RequireAbsoluteUrl(options.ResolvedBaseUrl, nameof(options.BaseUrl), failures);
         RequireAbsoluteUrl(options.ResolvedTokenEndpoint, nameof(options.TokenEndpoint), failures);
 
+        if (options.MaxPageSize is < 1)
+            failures.Add($"{nameof(BusinessCentralOptions)}.{nameof(options.MaxPageSize)} must be at least 1 when set.");
+
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);

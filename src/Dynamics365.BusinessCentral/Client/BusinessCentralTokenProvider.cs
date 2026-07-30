@@ -37,7 +37,7 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
     {
         _http = http;
         _options = options.Value;
-        _observer = observer ?? new NullBusinessCentralObserver();
+        _observer = SafeBusinessCentralObserver.Wrap(observer);
     }
 
     public async Task<string> GetTokenAsync(CancellationToken cancellationToken)

@@ -7,6 +7,39 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Auto-paging is server-driven** (`QueryAllAsync`, `QueryStreamAsync`, fluent
+  `StreamAsync`/`ToAllAsync`), based on live-tenant measurement
+  ([NEXTLINK-FINDINGS-BASTION.md](NEXTLINK-FINDINGS-BASTION.md)): by default no page size
+  is sent, Business Central pages at its own configured Max Page Size (20,000 online) and
+  continuation follows `@odata.nextLink` — an opaque `$skiptoken` cursor immune to the
+  row-shift hazards of `$skip` offset paging, which is gone (a caller-set `WithSkip` still
+  applies, to the first request). A full 118k-row sweep drops from 119 round trips to 6.
+  The package no longer ships a page-size constant; `WithPageSize`/fluent `PageSize` now
+  request smaller server pages via `Prefer: odata.maxpagesize` (clamped by the server)
+  instead of issuing `$top` round trips. `WithTop` is unchanged: a pure result cap, sent
+  as `$top` and enforced client-side across continuations. Single-page reads never send
+  the page preference — it would silently truncate them.
+
+### Added
+
+- **`BusinessCentralOptions.MaxPageSize`** (nullable, default null): the registration-level
+  page preference for streaming reads, overridable per query with `WithPageSize`. Null
+  defers entirely to the server's configuration.
+
+### Fixed
+
+- **A throwing observer can no longer break requests.** `IBusinessCentralObserver`
+  callbacks are isolated: diagnostics are best-effort, so a bug in an observer no longer
+  turns a successful request into a failure or masks the real server error.
+- **Caller-requested cancellation is no longer reported to the observer as a request
+  failure** — ordinary shutdowns stop putting noise in error metrics. Timeouts (which are
+  not caller-requested) are still reported.
+- **The manual-construction constructor documents its trade-off**: a privately created,
+  per-instance token cache and shared token/data HTTP traffic — construct once and reuse,
+  or prefer `AddBusinessCentral`.
+
 ## [2.0.0-alpha.4] - 2026-07-30
 
 **Prerelease.** Incorporates the first live-tenant validation round
@@ -281,9 +314,12 @@ Known gaps in this prerelease, to be confirmed before 2.0.0 stable
   live SaaS tenant all four properties bind — `Name`, `Display_Name`, `Id` and
   `Evaluation_Company` were all populated. The "best-effort and null" caveat below applies
   only if an endpoint omits them, which the live tenant did not.
-- ⚠️ **Deliberately left unverified**: whether Business Central honours
-  `Prefer: return=representation` on a given endpoint — confirming it requires a real
-  write to a production tenant. Both outcomes (echo and `204`) are handled either way.
+- ✅ **Verified 2026-07-30**: `Prefer: return=representation` on writes. Measured via a
+  no-op `PATCH` against a live tenant: the `ODataV4` page endpoint returned `200` with the
+  full entity **both with and without the header** — these endpoints always echo on
+  `PATCH`, so the header is redundant there (and harmless). The `204` path remains as a
+  safety net; `POST` echo behaviour was left untested by choice (it would require creating
+  a real record).
 - ⚠️ **Inconclusive 2026-07-30**: server-driven `@odata.nextLink` paging. A 118k-row query
   against an `ODataV4` published-page endpoint did not produce server-driven paging;
   those endpoints may not emit `nextLink` at all, unlike `/api/v2.0`. The nextLink
