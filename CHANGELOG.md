@@ -302,9 +302,12 @@ Known gaps in this prerelease, to be confirmed before 2.0.0 stable
   live SaaS tenant all four properties bind — `Name`, `Display_Name`, `Id` and
   `Evaluation_Company` were all populated. The "best-effort and null" caveat below applies
   only if an endpoint omits them, which the live tenant did not.
-- ⚠️ **Deliberately left unverified**: whether Business Central honours
-  `Prefer: return=representation` on a given endpoint — confirming it requires a real
-  write to a production tenant. Both outcomes (echo and `204`) are handled either way.
+- ✅ **Verified 2026-07-30**: `Prefer: return=representation` on writes. Measured via a
+  no-op `PATCH` against a live tenant: the `ODataV4` page endpoint returned `200` with the
+  full entity **both with and without the header** — these endpoints always echo on
+  `PATCH`, so the header is redundant there (and harmless). The `204` path remains as a
+  safety net; `POST` echo behaviour was left untested by choice (it would require creating
+  a real record).
 - ⚠️ **Inconclusive 2026-07-30**: server-driven `@odata.nextLink` paging. A 118k-row query
   against an `ODataV4` published-page endpoint did not produce server-driven paging;
   those endpoints may not emit `nextLink` at all, unlike `/api/v2.0`. The nextLink

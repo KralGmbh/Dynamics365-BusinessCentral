@@ -197,7 +197,9 @@ await client.DeleteAsync("salesOrders", systemId);
 ```
 
 Writes send `Prefer: return=representation`. If the server answers `204 No Content`, the
-payload you sent is returned instead of throwing. Keys may be a `systemId` or an alternate
+payload you sent is returned instead of throwing. (Measured live: `ODataV4` page endpoints
+echo the entity on `PATCH` regardless of the header, so the `204` path is a safety net
+rather than the common case.) Keys may be a `systemId` or an alternate
 key such as `No='1000'`.
 
 When the response type differs from the payload — posting an anonymous object and reading
