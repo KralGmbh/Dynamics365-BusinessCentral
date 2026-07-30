@@ -10,13 +10,16 @@ jobs:
 
     permissions:
       contents: write   # needed to upload artifacts to the release
+      id-token: write   # needed for NuGet Trusted Publishing (OIDC)
 
     steps:
-      - uses: actions/checkout@v4
+      # All actions pinned to full commit SHAs (SonarCloud S7637): a moved tag on a
+      # compromised action must not be able to inject code into the publish path.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.x
 
@@ -26,14 +29,25 @@ jobs:
 
       - run: dotnet pack -c Release --no-build
 
+      # Trusted Publishing: exchanges this workflow's OIDC token for a short-lived
+      # API key under the nuget.org policy (owner daru → this repo + workflow file).
+      # No long-lived secret to scope, rotate or leak — and new package IDs owned by
+      # the same account publish without key changes, which is exactly what broke
+      # the first two-package release under the old scoped NUGET_API_KEY.
+      - name: NuGet login (Trusted Publishing)
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
+        with:
+          user: daru
+
       - name: Push to NuGet
         run: |
           dotnet nuget push **/*.nupkg \
             --source https://api.nuget.org/v3/index.json \
-            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} \
             --skip-duplicate
 
       - name: Upload nupkg to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: "**/*.nupkg"
