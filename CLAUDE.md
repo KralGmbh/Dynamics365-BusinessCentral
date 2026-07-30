@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `Dynamics365.BusinessCentral` — a NuGet library: a lightweight, strongly-typed client for the Dynamics 365 Business Central OData v4 API. Three runtime dependencies (`Microsoft.Extensions.DependencyInjection`, `Microsoft.Extensions.Http`, `Microsoft.Extensions.Options.ConfigurationExtensions`); everything else is `HttpClient` + `System.Text.Json`. Staying near-dependency-free is a deliberate design goal — don't add packages casually.
 
+A companion package, `src/Dynamics365.BusinessCentral.Testing/` (`FakeBusinessCentral`), runs a real client over a scripted transport so consumers can assert the exact OData their code produces. It is versioned in lockstep with the main csproj and ships from the same release. Two rules: it depends only on the main package's **public** API (no `InternalsVisibleTo` — if the fake needs something internal, that something probably wants to be public), and it deliberately contains **no OData query evaluation** — an in-memory `$filter` engine would be a permanent compatibility liability. Keep it a transport fake. Its contract is pinned by `FakeBusinessCentralTests` in the main test project.
+
 Package references are declared **per TFM** (8.0.x / 9.0.x / 10.0.x) in both csproj files. Adding a package to one project means adding all three conditional entries to both, or restore fails with NU1605 downgrade errors.
 
 ## Commands
