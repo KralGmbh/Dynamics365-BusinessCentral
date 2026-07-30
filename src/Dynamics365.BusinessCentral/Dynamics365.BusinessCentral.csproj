@@ -7,7 +7,7 @@
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>2.0.0-alpha.4</Version>
+        <Version>2.0.0-alpha.5</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
 
@@ -35,13 +35,15 @@
         <!-- Shown on the nuget.org package page. Kept short and pointed at CHANGELOG.md
              rather than duplicated, since nuget.org renders this as plain text. -->
         <PackageReleaseNotes>
-            PRERELEASE — 2.0.0-alpha.4 incorporates the first live-tenant validation round.
+            PRERELEASE — 2.0.0-alpha.5 is the final validation build before 2.0.0 stable.
 
-            Filter.In now renders a same-field or-chain instead of the OData `in` operator,
-            which Business Central rejects without $schemaversion=2.1 (verified against a
-            live tenant). Also documented from live findings: `or` across different fields
-            is rejected by BC, `eq null` matches blank text fields, and Edm.Date fields are
-            date-only — model them as DateOnly.
+            Auto-paging is now server-driven, based on live-tenant measurement: no page
+            size is sent by default, Business Central pages at its own configured Max Page
+            Size and continuation follows @odata.nextLink ($skiptoken cursor — the $skip
+            loop is gone). BusinessCentralOptions.MaxPageSize and WithPageSize request
+            smaller pages via Prefer: odata.maxpagesize. Also: observer callbacks are
+            isolated, caller cancellation is no longer reported as a failure, and
+            Prefer: return=representation was verified against a live tenant.
 
             Breaking changes — see the migration guide before upgrading:
             https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/MIGRATION.md
