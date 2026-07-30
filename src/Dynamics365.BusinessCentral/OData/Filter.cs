@@ -132,18 +132,31 @@ public static class Filter
         In(PropertyPath.Resolve(field), values);
 
     /// <summary>Creates a filter of the form: field eq null</summary>
+    /// <remarks>
+    /// On Business Central text fields this means <b>"null or blank"</b>, not just null:
+    /// AL text fields cannot be null — an unset field is an empty string — and BC's OData
+    /// layer maps <c>eq null</c> onto "is blank". Verified against a live tenant: an item
+    /// whose field serialises as <c>""</c> matches <c>eq null</c>. Differs from the
+    /// equivalent LINQ predicate, which would not match an empty string.
+    /// </remarks>
     public static ODataFilter IsNull(string field) =>
         new($"{field} eq null");
 
-    /// <summary>Creates a filter of the form: field eq null</summary>
+    /// <inheritdoc cref="IsNull(string)"/>
     public static ODataFilter IsNull<TEntity>(Expression<Func<TEntity, object?>> field) =>
         IsNull(PropertyPath.Resolve(field));
 
     /// <summary>Creates a filter of the form: field ne null</summary>
+    /// <remarks>
+    /// The complement of <see cref="IsNull(string)"/>: on Business Central text fields this
+    /// <b>excludes blank strings</b>, because BC treats an unset text field (an empty
+    /// string) as null. "Has any value including empty" cannot be expressed with this
+    /// filter — it is "has a non-blank value".
+    /// </remarks>
     public static ODataFilter IsNotNull(string field) =>
         new($"{field} ne null");
 
-    /// <summary>Creates a filter of the form: field ne null</summary>
+    /// <inheritdoc cref="IsNotNull(string)"/>
     public static ODataFilter IsNotNull<TEntity>(Expression<Func<TEntity, object?>> field) =>
         IsNotNull(PropertyPath.Resolve(field));
 

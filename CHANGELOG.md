@@ -18,6 +18,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Documented a Business Central limitation on `.Or(...)`**: `or` between filters on
   *different* fields has no AL equivalent and is rejected by the server. Same-field `or`
   and `.And(...)` are unaffected.
+- **Documented null-vs-blank semantics on `Filter.IsNull`/`IsNotNull`** (live-tenant
+  finding): AL text fields cannot be null, and BC maps `eq null` onto "is blank" — so
+  `IsNull` matches empty strings and `IsNotNull` excludes them, unlike the equivalent
+  LINQ predicate.
+- **Documented date modelling** (live-tenant finding): BC `Edm.Date` fields are date-only
+  on the wire, with `0001-01-01` as the unset sentinel — map them to `DateOnly`; a bare
+  `DateTimeOffset` property fails deserialization on every row. The outbound side of the
+  alpha.2 `DateOnly` filter fix was confirmed against a real `Edm.Date` field.
+- **The Testing package README states what a transport fake cannot prove**: it verifies
+  the OData you generate, not what Business Central accepts — operators still need one
+  live verification.
 
 ## [2.0.0-alpha.3] - 2026-07-30
 
@@ -256,14 +267,20 @@ are silent.
 
 ### Unverified
 
-Known gaps in this prerelease, to be confirmed before 2.0.0 stable:
+Known gaps in this prerelease, to be confirmed before 2.0.0 stable
+*(status as of the 2026-07-30 live-tenant validation against BC SaaS)*:
 
-- `GetCompaniesAsync` targets `{BaseUrl}/Company`. `BusinessCentralCompany.Name` is
-  reliable; `DisplayName`, `Id` and `IsEvaluationCompany` are best-effort and null when the
-  endpoint does not return them. Not checked against a live tenant.
-- Whether Business Central honours `Prefer: return=representation` on a given endpoint,
-  which determines how often the `204 No Content` path is taken on writes.
-- Paging against a real dataset large enough to trigger server-driven `@odata.nextLink`.
+- ✅ **Verified 2026-07-30**: `GetCompaniesAsync` targets `{BaseUrl}/Company`. Against a
+  live SaaS tenant all four properties bind — `Name`, `Display_Name`, `Id` and
+  `Evaluation_Company` were all populated. The "best-effort and null" caveat below applies
+  only if an endpoint omits them, which the live tenant did not.
+- ⚠️ **Deliberately left unverified**: whether Business Central honours
+  `Prefer: return=representation` on a given endpoint — confirming it requires a real
+  write to a production tenant. Both outcomes (echo and `204`) are handled either way.
+- ⚠️ **Inconclusive 2026-07-30**: server-driven `@odata.nextLink` paging. A 118k-row query
+  against an `ODataV4` published-page endpoint did not produce server-driven paging;
+  those endpoints may not emit `nextLink` at all, unlike `/api/v2.0`. The nextLink
+  handling remains covered by tests but unobserved in the wild.
 
 ## [1.0.0] - 2026-01-20
 
