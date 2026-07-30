@@ -13,8 +13,6 @@ namespace Dynamics365.BusinessCentral.OData;
 /// </remarks>
 internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEntity>
 {
-    private const int DefaultPageSize = 1000;
-
     private readonly IBusinessCentralQueryExecutor _executor;
     private readonly string _path;
 
@@ -158,67 +156,18 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
     public async IAsyncEnumerable<TEntity> StreamAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var limit = _top;
+        // The paging state machine lives in QueryPager, shared with the path-based
+        // QueryStreamAsync; only the fetch delegates differ.
+        var stream = QueryPager.StreamAsync(
+            _top,
+            _pageSize ?? QueryPager.DefaultPageSize,
+            _skip ?? 0,
+            FetchAsync,
+            _executor.FetchNextPageAsync<TEntity>,
+            cancellationToken);
 
-        // Top(0) is a request for no rows. Returning here also keeps the loop below from
-        // requesting $top=0 forever without ever advancing.
-        if (limit == 0)
-            yield break;
-
-        var pageSize = _pageSize ?? DefaultPageSize;
-
-        if (pageSize <= 0)
-            yield break;
-
-        var skip = _skip ?? 0;
-        var emitted = 0;
-
-        var requested = NextTop(pageSize, limit, emitted);
-        var page = await FetchAsync(requested, skip, cancellationToken).ConfigureAwait(false);
-
-        // True once the server started driving paging via @odata.nextLink, at which point
-        // it — not our $top — decides where the collection ends.
-        var serverDriven = false;
-
-        while (true)
-        {
-            var inPage = 0;
-
-            foreach (var entity in page.Value)
-            {
-                yield return entity;
-
-                emitted++;
-                inPage++;
-
-                if (limit is { } cap && emitted >= cap)
-                    yield break;
-            }
-
-            if (!string.IsNullOrWhiteSpace(page.NextLink))
-            {
-                serverDriven = true;
-
-                page = await _executor
-                    .FetchNextPageAsync<TEntity>(page.NextLink, cancellationToken)
-                    .ConfigureAwait(false);
-
-                continue;
-            }
-
-            // The server was paging and stopped offering a nextLink: nothing left.
-            if (serverDriven)
-                yield break;
-
-            // No nextLink and a short page means the collection is exhausted.
-            if (inPage < requested)
-                yield break;
-
-            skip += inPage;
-            requested = NextTop(pageSize, limit, emitted);
-
-            page = await FetchAsync(requested, skip, cancellationToken).ConfigureAwait(false);
-        }
+        await foreach (var entity in stream.ConfigureAwait(false))
+            yield return entity;
     }
 
     private Task<ODataResponse<TEntity>> FetchAsync(int top, int skip, CancellationToken cancellationToken)
@@ -228,16 +177,6 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         options.Skip = skip;
 
         return _executor.FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, cancellationToken);
-    }
-
-    /// <summary>Page size for the next request, never overshooting a caller-set <c>$top</c>.</summary>
-    private static int NextTop(int pageSize, int? limit, int emitted)
-    {
-        if (limit is not { } cap)
-            return pageSize;
-
-        var remaining = cap - emitted;
-        return remaining < pageSize ? remaining : pageSize;
     }
 
     public async Task<TEntity?> FirstOrDefaultAsync(CancellationToken cancellationToken = default)

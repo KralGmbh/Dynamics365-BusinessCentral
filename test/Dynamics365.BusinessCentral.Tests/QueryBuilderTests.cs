@@ -185,6 +185,19 @@ public class QueryBuilderTests
         Assert.Contains("$expand=lines($select=lineNo)", Decode(urls[0]));
     }
 
+    // Expand encoding is selective: structural characters survive, everything unsafe is
+    // escaped. Previously only spaces were handled, so an '&' inside a nested filter
+    // truncated the query string.
+    [Fact]
+    public async Task Expand_Escapes_Unsafe_Characters_Inside_Nested_Filters()
+    {
+        var (client, urls) = Capturing();
+
+        await client.Query<SalesOrder>().Expand("lines($filter=code eq 'A&B')").ToListAsync();
+
+        Assert.Contains("$expand=lines($filter=code%20eq%20'A%26B')", urls[0]);
+    }
+
     [Fact]
     public async Task ToPageAsync_Returns_Items_And_Total()
     {

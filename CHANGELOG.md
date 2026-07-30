@@ -7,6 +7,37 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`Retry.JitterFactor`** (default `0.2`): every retry delay — computed backoff *and*
+  honoured `Retry-After` — is spread by `random(0, delay × factor)`, capped by `MaxDelay`,
+  so concurrent callers throttled at the same moment stop retrying in lockstep and
+  re-throttling each other. The spread is additive only, because a `Retry-After` is a
+  minimum wait. Set `0` for deterministic delays.
+
+### Fixed
+
+- **Token acquisition is retried.** The token request previously had no transient handling
+  at all — a blip at `login.microsoftonline.com` failed every in-flight request at once,
+  and following the README's resilience-composition recipe removed the only outer safety
+  net. Token requests now honour the same `Retry` options as data requests (the
+  `client_credentials` grant has no side effects, so replay is unconditionally safe),
+  report `OnRequestRetrying`, and wrap network failures as
+  `BusinessCentralConnectionException`. Credential failures (`400`/`401`) are not retried.
+- **Concurrent `401`s no longer cascade token refreshes.** Invalidation is now
+  compare-and-swap: a request that observed a stale token cannot clear a token that was
+  already refreshed behind it.
+- **`$expand` encoding handles unsafe characters.** Only spaces were escaped before, so an
+  `&`, `#` or `+` inside a nested expand clause (e.g. `lines($filter=code eq 'A&B')`)
+  silently truncated the query string. Structural expand syntax is preserved; everything
+  else is percent-encoded.
+
+### Changed
+
+- The auto-paging state machine now exists once (shared by `QueryStreamAsync` and the
+  fluent `StreamAsync`) instead of as two hand-synchronised copies. No behavioural change;
+  both entry points are covered by the existing paging tests.
+
 ## [2.0.0-alpha.2] - 2026-07-29
 
 **Prerelease.** The release candidate for 2.0.0 stable: everything below was driven by
