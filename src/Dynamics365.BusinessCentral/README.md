@@ -222,7 +222,7 @@ Every method has a string overload and a typed overload.
 | `Filter.Contains` | `contains(field,value)` |
 | `Filter.StartsWith` | `startswith(field,value)` |
 | `Filter.EndsWith` | `endswith(field,value)` |
-| `Filter.In` | `field in (...)` |
+| `Filter.In` | `(field eq v1) or (field eq v2) ...` |
 | `Filter.IsNull` | `field eq null` |
 | `Filter.IsNotNull` | `field ne null` |
 
@@ -233,8 +233,15 @@ var filter = Filter.Equals<SalesOrder>(o => o.Status, "Open")
                    .And(Filter.GreaterThan<SalesOrder>(o => o.Amount, 100));
 ```
 
-`Filter.In` with an empty collection yields a filter matching nothing, rather than the
-invalid OData expression `field in ()`.
+`Filter.In` renders a **same-field `or`-chain**, not the OData `in` operator — Business
+Central rejects `in` without `$schemaversion=2.1` (`BadRequest_MethodNotImplemented`).
+With an empty collection it yields a filter matching nothing, so passing an empty key set
+is safe.
+
+> **Business Central limitation:** `or` only works between filters on the *same* field.
+> Combining filters on different fields with `.Or(...)` — `field1 eq 1 or field2 eq 2` —
+> has no AL filter equivalent and the server rejects it. `.And(...)` has no such
+> restriction.
 
 ## Field names without the builder
 

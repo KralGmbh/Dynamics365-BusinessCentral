@@ -90,19 +90,33 @@ public static class Filter
         EndsWith(PropertyPath.Resolve(field), value);
 
     /// <summary>
-    /// Creates a filter of the form: field in (value1,value2,...).
+    /// Creates a filter matching any of <paramref name="values"/>, rendered as a chain of
+    /// same-field equalities: <c>(field eq v1) or (field eq v2) or ...</c>.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// Deliberately <b>not</b> the OData <c>in</c> operator: Business Central only accepts
+    /// <c>field in (...)</c> with <c>$schemaversion=2.1</c> and answers
+    /// <c>BadRequest_MethodNotImplemented</c> without it — verified against a live tenant.
+    /// A same-field <c>or</c>-chain is explicitly supported on every schema version and is
+    /// semantically identical. The URL grows with the value count; chunk large key sets.
+    /// </para>
+    /// <para>
     /// An empty <paramref name="values"/> produces a filter that matches nothing
-    /// (<c>false</c>) rather than the invalid OData expression <c>field in ()</c>. This
-    /// makes <c>Filter.In(field, ids)</c> safe when <c>ids</c> turns out to be empty.
+    /// (<c>false</c>), so <c>Filter.In(field, ids)</c> is safe when <c>ids</c> turns out
+    /// to be empty.
+    /// </para>
     /// </remarks>
     public static ODataFilter In(string field, params object[] values)
     {
         if (values is null || values.Length == 0)
-            return new ODataFilter("false");
+            return None;
 
-        return new ODataFilter($"{field} in ({string.Join(",", values.Select(Format))})");
+        if (values.Length == 1)
+            return Equals(field, values[0]);
+
+        return new ODataFilter(
+            string.Join(" or ", values.Select(v => $"({field} eq {Format(v)})")));
     }
 
     /// <inheritdoc cref="In(string, object[])"/>
