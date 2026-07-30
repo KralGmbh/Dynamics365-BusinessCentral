@@ -13,11 +13,13 @@ jobs:
       id-token: write   # needed for NuGet Trusted Publishing (OIDC)
 
     steps:
-      - uses: actions/checkout@v4
+      # All actions pinned to full commit SHAs (SonarCloud S7637): a moved tag on a
+      # compromised action must not be able to inject code into the publish path.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.x
 
@@ -34,7 +36,7 @@ jobs:
       # the first two-package release under the old scoped NUGET_API_KEY.
       - name: NuGet login (Trusted Publishing)
         id: nuget-login
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
         with:
           user: daru
 
@@ -46,6 +48,6 @@ jobs:
             --skip-duplicate
 
       - name: Upload nupkg to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: "**/*.nupkg"
