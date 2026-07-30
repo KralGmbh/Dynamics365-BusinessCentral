@@ -31,8 +31,17 @@ internal sealed class BusinessCentralOptionsValidator : IValidateOptions<Busines
         if (options.MaxPageSize is < 1)
             failures.Add($"{nameof(BusinessCentralOptions)}.{nameof(options.MaxPageSize)} must be at least 1 when set.");
 
-        if (options.RequestTimeout is { } timeout && timeout <= TimeSpan.Zero)
-            failures.Add($"{nameof(BusinessCentralOptions)}.{nameof(options.RequestTimeout)} must be positive when set.");
+        // Upper bound matches HttpClient.Timeout's own maximum (int.MaxValue ms, ~24.8
+        // days) — a larger value would pass here and then throw as a bare
+        // ArgumentOutOfRangeException when the client is created.
+        if (options.RequestTimeout is { } timeout &&
+            (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromMilliseconds(int.MaxValue)))
+        {
+            failures.Add(
+                $"{nameof(BusinessCentralOptions)}.{nameof(options.RequestTimeout)} must be positive " +
+                $"and at most {TimeSpan.FromMilliseconds(int.MaxValue).TotalDays:F1} days " +
+                "(HttpClient's maximum) when set.");
+        }
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success
