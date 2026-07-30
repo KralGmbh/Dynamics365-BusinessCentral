@@ -7,6 +7,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0-alpha.4] - 2026-07-30
+
+**Prerelease.** Incorporates the first live-tenant validation round
+([LIVE-TENANT-FINDINGS-BASTION.md](LIVE-TENANT-FINDINGS-BASTION.md)): one behavioural fix
+found only by hitting a real tenant, plus field-verified documentation. Remaining before
+stable: the annotated *Unverified* items under [2.0.0-alpha].
+
 ### Fixed
 
 - **`Filter.In` works against real Business Central tenants.** It rendered the OData `in`
