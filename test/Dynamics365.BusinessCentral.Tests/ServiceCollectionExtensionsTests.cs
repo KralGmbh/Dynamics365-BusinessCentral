@@ -212,7 +212,9 @@ public class ServiceCollectionExtensionsTests
         using var provider = services.BuildServiceProvider();
         var factory = provider.GetRequiredService<IHttpClientFactory>();
 
-        Assert.Equal(TimeSpan.FromSeconds(100),
+        // Whatever the framework default is — not a hard-coded 100s.
+        using var reference = new HttpClient();
+        Assert.Equal(reference.Timeout,
             factory.CreateClient(BusinessCentralHttpClients.Client).Timeout);
     }
 

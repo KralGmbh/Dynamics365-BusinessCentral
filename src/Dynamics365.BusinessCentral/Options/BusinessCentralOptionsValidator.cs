@@ -39,8 +39,7 @@ internal sealed class BusinessCentralOptionsValidator : IValidateOptions<Busines
         {
             failures.Add(
                 $"{nameof(BusinessCentralOptions)}.{nameof(options.RequestTimeout)} must be positive " +
-                $"and at most {TimeSpan.FromMilliseconds(int.MaxValue).TotalDays:F1} days " +
-                "(HttpClient's maximum) when set.");
+                "and at most int.MaxValue milliseconds (~24.8 days, HttpClient's maximum) when set.");
         }
 
         return failures.Count == 0

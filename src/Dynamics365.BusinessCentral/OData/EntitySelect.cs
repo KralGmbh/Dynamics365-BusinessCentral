@@ -19,7 +19,8 @@ namespace Dynamics365.BusinessCentral.OData;
 /// <c>init</c>) — a get-only computed property cannot receive data and is not a column;</item>
 /// <item>scalar types only (value types and <see cref="string"/>, including nullables) —
 /// classes and collections are navigations, which belong in <c>$expand</c>;</item>
-/// <item>not <c>[JsonIgnore]</c>;</item>
+/// <item>not unconditionally <c>[JsonIgnore]</c> — conditional ignores such as
+/// <c>WhenWritingNull</c> still deserialize, so those properties remain columns;</item>
 /// <item>wire name not starting with <c>@</c> — <c>@odata.etag</c> and friends are
 /// annotations the server sends regardless, not selectable columns.</item>
 /// </list>
