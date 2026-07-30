@@ -32,4 +32,15 @@ internal static class HttpRequestExtensions
     {
         request.Headers.TryAddWithoutValidation("Prefer", "return=representation");
     }
+
+    /// <summary>
+    /// Asks the server to cap pages at <paramref name="maxPageSize"/> rows via
+    /// <c>Prefer: odata.maxpagesize</c>. The server clamps the value to its own configured
+    /// maximum and continues via <c>@odata.nextLink</c> — the supported, deployment-portable
+    /// way to pace a streaming read (verified against a live BC SaaS tenant).
+    /// </summary>
+    public static void AddMaxPageSizePreference(this HttpRequestMessage request, int maxPageSize)
+    {
+        request.Headers.TryAddWithoutValidation("Prefer", $"odata.maxpagesize={maxPageSize}");
+    }
 }

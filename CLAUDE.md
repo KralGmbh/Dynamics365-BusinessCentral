@@ -89,13 +89,9 @@ Note the quirk in `BuildQueryUrl`: a filter string of `"true"` is treated as "no
 
 ### Paging
 
-The auto-paging state machine lives **once**, in `QueryPager` (internal, `OData/`); both public entry points — `BusinessCentralClient.QueryStreamAsync` (path-based) and `BusinessCentralQuery<T>.StreamAsync` (fluent) — delegate to it and differ only in their fetch delegates. Termination is three-tier:
+The auto-paging state machine lives **once**, in `QueryPager` (internal, `OData/`); both public entry points — `BusinessCentralClient.QueryStreamAsync` (path-based) and `BusinessCentralQuery<T>.StreamAsync` (fluent) — delegate to it and differ only in their fetch delegates. Paging is **server-driven** (measured against a live BC SaaS tenant — see `NEXTLINK-FINDINGS-BASTION.md`): the first request carries `$top` only when the caller set a result cap and `$skip` only when they set an offset; the resolved page preference (`QueryOptions.PageSize ?? BusinessCentralOptions.MaxPageSize ?? nothing`) is sent as `Prefer: odata.maxpagesize` on the first request **and every continuation** (the preference is per request, not per cursor); the server pages at its own Max Page Size otherwise. Termination: no `@odata.nextLink` means done — either the server served everything or the `$top` budget is satisfied. There is no `$skip` loop and no package page-size constant; don't reintroduce either. Single-page reads (`QueryAsync`, `ToListAsync`, `GetAsync`, …) pass a null preference on purpose — `odata.maxpagesize` on a one-shot request silently truncates it.
 
-1. Follow `@odata.nextLink` whenever present, and set `serverDriven`.
-2. Once `serverDriven`, a missing nextLink means the collection is exhausted — the `$top` short-page rule no longer applies.
-3. Otherwise stop on the first page shorter than the requested size.
-
-`QueryOptions.PageSize` is rows-per-round-trip; `Top` is a result cap. `QueryPager` sizes each request's `$top` from the remaining cap, so a request never overshoots it. The old `WithTop`-as-page-size behaviour is gone (2.0); `WithPageSize` is the only way to size round trips.
+`QueryOptions.PageSize` is the server-page preference; `Top` is a result cap (sent as `$top`, enforced client-side mid-page). The old `WithTop`-as-page-size behaviour is gone (2.0).
 
 ### Writes
 

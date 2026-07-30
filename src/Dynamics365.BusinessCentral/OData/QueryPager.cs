@@ -9,26 +9,26 @@ namespace Dynamics365.BusinessCentral.OData;
 /// cannot drift apart; only the page-fetching delegates differ per caller.
 /// </summary>
 /// <remarks>
-/// Three-tier termination:
-/// <list type="number">
-/// <item>Follow <c>@odata.nextLink</c> whenever present — the server decides page size.</item>
-/// <item>Once server-driven, a missing nextLink means the collection is exhausted; the
-/// short-page rule no longer applies.</item>
-/// <item>Otherwise stop on the first page shorter than requested.</item>
-/// </list>
-/// <c>limit</c> caps emitted rows (<c>$top</c> semantics), enforced mid-page and never
-/// overshot by a request; <c>pageSize</c> sizes the round trips.
+/// <para>
+/// Paging is <b>server-driven</b> (verified against a live BC SaaS tenant): the first
+/// request carries no <c>$top</c> unless the caller set a result cap, the server pages at
+/// its own Max Page Size — or at the <c>Prefer: odata.maxpagesize</c> preference the fetch
+/// delegates send when one is configured — and continuation follows
+/// <c>@odata.nextLink</c>, an opaque <c>$skiptoken</c> cursor immune to the offset-shift
+/// hazard of <c>$skip</c> paging. No nextLink means the response is complete: either the
+/// server served everything, or the caller's <c>$top</c> budget is satisfied.
+/// </para>
+/// <para>
+/// <c>limit</c> (<c>$top</c> semantics) caps emitted rows, enforced mid-page client-side
+/// and also sent to the server so it never over-serves a capped query.
+/// </para>
 /// </remarks>
 internal static class QueryPager
 {
-    /// <summary>Default rows-per-round-trip when the caller did not set a page size.</summary>
-    public const int DefaultPageSize = 1000;
-
     public static async IAsyncEnumerable<TEntity> StreamAsync<TEntity>(
         int? limit,
-        int pageSize,
         int initialSkip,
-        Func<int, int, CancellationToken, Task<ODataResponse<TEntity>>> fetchPage,
+        Func<int?, int, CancellationToken, Task<ODataResponse<TEntity>>> fetchFirstPage,
         Func<string, CancellationToken, Task<ODataResponse<TEntity>>> fetchNextPage,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -36,68 +36,28 @@ internal static class QueryPager
         if (limit == 0)
             yield break;
 
-        // Guards the loop below: with a non-positive page size the "short page" termination
-        // check can never fire, so it would request the same empty page forever. The public
-        // setters reject these values; this covers the internal ones.
-        if (pageSize <= 0)
-            yield break;
-
-        var skip = initialSkip;
         var emitted = 0;
 
-        var requested = NextTop(pageSize, limit, emitted);
-        var page = await fetchPage(requested, skip, cancellationToken).ConfigureAwait(false);
-
-        // True once the server started driving paging via @odata.nextLink, at which point
-        // it — not our $top — decides where the collection ends.
-        var serverDriven = false;
+        var page = await fetchFirstPage(limit, initialSkip, cancellationToken).ConfigureAwait(false);
 
         while (true)
         {
-            var inPage = 0;
-
             foreach (var entity in page.Value)
             {
                 yield return entity;
 
                 emitted++;
-                inPage++;
 
                 if (limit is { } cap && emitted >= cap)
                     yield break;
             }
 
-            if (!string.IsNullOrWhiteSpace(page.NextLink))
-            {
-                serverDriven = true;
-
-                page = await fetchNextPage(page.NextLink!, cancellationToken).ConfigureAwait(false);
-
-                continue;
-            }
-
-            // The server was paging and stopped offering a nextLink: nothing left.
-            if (serverDriven)
+            // No continuation means the collection (or the caller's $top budget) is
+            // exhausted — BC offers a nextLink on every page it truncates.
+            if (string.IsNullOrWhiteSpace(page.NextLink))
                 yield break;
 
-            // No nextLink and a short page means the collection is exhausted.
-            if (inPage < requested)
-                yield break;
-
-            skip += inPage;
-            requested = NextTop(pageSize, limit, emitted);
-
-            page = await fetchPage(requested, skip, cancellationToken).ConfigureAwait(false);
+            page = await fetchNextPage(page.NextLink!, cancellationToken).ConfigureAwait(false);
         }
-    }
-
-    /// <summary>Page size for the next request, never overshooting a caller-set <c>$top</c>.</summary>
-    private static int NextTop(int pageSize, int? limit, int emitted)
-    {
-        if (limit is not { } cap)
-            return pageSize;
-
-        var remaining = cap - emitted;
-        return remaining < pageSize ? remaining : pageSize;
     }
 }

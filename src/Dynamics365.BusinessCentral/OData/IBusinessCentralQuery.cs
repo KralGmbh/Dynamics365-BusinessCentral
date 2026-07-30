@@ -55,7 +55,12 @@ public interface IBusinessCentralQuery<TEntity>
     /// <summary>Skips entities (<c>$skip</c>).</summary>
     IBusinessCentralQuery<TEntity> Skip(int count);
 
-    /// <summary>Sets rows fetched per round trip when auto-paging. Not a result limit.</summary>
+    /// <summary>
+    /// Requests at most <paramref name="size"/> rows per page when auto-paging, via
+    /// <c>Prefer: odata.maxpagesize</c>. Not a result limit. When unset, the server pages
+    /// at its own configured Max Page Size (or <c>BusinessCentralOptions.MaxPageSize</c>,
+    /// when that is set); the server clamps the value to its own maximum.
+    /// </summary>
     IBusinessCentralQuery<TEntity> PageSize(int size);
 
     /// <summary>Executes a single request and returns that page's entities.</summary>

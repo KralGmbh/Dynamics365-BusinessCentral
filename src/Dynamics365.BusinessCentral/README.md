@@ -121,12 +121,26 @@ var orders = await client.Query<SalesOrder>()
 `StreamAsync` fetches pages as you consume them and stops fetching when you stop reading —
 prefer it over `ToAllAsync` for large sets.
 
+Paging is **server-driven** (verified against a live BC SaaS tenant): by default no page
+size is sent at all, Business Central pages at its own configured Max Page Size (20,000
+online), and continuation follows `@odata.nextLink` — an opaque cursor immune to the
+row-shift hazards of offset paging. To bound per-response size — memory, slow pages,
+timeouts — request smaller pages; the value is sent as `Prefer: odata.maxpagesize` and
+the server clamps it to its own maximum, so it can only ever ask for *less*:
+
 ```csharp
+// per registration — the default for every streaming read
+services.AddBusinessCentral(o => { /* ... */ o.MaxPageSize = 1000; });
+
+// per query — overrides the registration value
 await foreach (var order in client.Query<SalesOrder>().PageSize(500).StreamAsync())
 {
     if (Process(order) is Done) break;   // no further pages are requested
 }
 ```
+
+`Top(n)` remains a pure result cap: it is sent as `$top` so the server never over-serves a
+capped query, and enforced mid-page while continuations are followed.
 
 ## Counting and paging
 

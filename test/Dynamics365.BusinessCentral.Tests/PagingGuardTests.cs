@@ -8,10 +8,10 @@ using Dynamics365.BusinessCentral.Errors;
 namespace Dynamics365.BusinessCentral.Tests;
 
 /// <summary>
-/// Regression cover for non-positive paging values, which previously produced a
-/// non-terminating paging loop: with a page size of zero the "short page" termination
-/// check (<c>inPage &lt; pageSize</c>) can never fire, so the same empty page is requested
-/// forever without <c>$skip</c> ever advancing.
+/// Boundary cover for paging values. Paging is server-driven (nextLink continuation), so
+/// a bad page size can no longer cause a non-terminating loop — these pin the boundary
+/// validation and that non-positive internal values degrade to "no preference" rather
+/// than reaching the server.
 /// </summary>
 public class PagingGuardTests
 {
@@ -117,24 +117,25 @@ public class PagingGuardTests
         Assert.Equal(0, requests());
     }
 
-    // The internal setters bypass the public guards, so the loop keeps its own.
+    // The internal setters bypass the public guards; a non-positive value must degrade
+    // to "no preference" instead of sending the server odata.maxpagesize=0.
     [Fact]
-    public async Task Non_Positive_Page_Size_Set_Internally_Still_Terminates()
+    public async Task Non_Positive_Page_Size_Set_Internally_Sends_No_Preference()
     {
-        var (client, requests) = Bounded();
+        string? preferHeader = null;
 
-        var options = new QueryOptions();
-        typeof(QueryOptions).GetProperty(nameof(QueryOptions.PageSize))!
-            .SetValue(options, 0);
-
-        Assert.Equal(0, options.PageSize);
+        var client = TestBase.CreateClient(TestBase.WithToken(req =>
+        {
+            preferHeader = req.Headers.TryGetValues("Prefer", out var v) ? string.Join(",", v) : null;
+            return TestBase.Json("{\"value\":[]}");
+        }));
 
         var result = await client.QueryAllAsync<TestEntity>(
             "orders",
             options: o => typeof(QueryOptions).GetProperty(nameof(QueryOptions.PageSize))!.SetValue(o, 0));
 
         Assert.Empty(result);
-        Assert.Equal(0, requests());
+        Assert.Null(preferHeader);
     }
 
     #endregion
@@ -151,7 +152,7 @@ public class PagingGuardTests
             dataCalls++;
 
             return dataCalls <= 2
-                ? TestBase.Json("{\"value\":[{\"no\":\"a\"},{\"no\":\"b\"}]}")
+                ? TestBase.Json($"{{\"value\":[{{\"no\":\"a{dataCalls}\"}},{{\"no\":\"b{dataCalls}\"}}],\"@odata.nextLink\":\"https://test/p{dataCalls + 1}\"}}")
                 : TestBase.Json("{\"value\":[{\"no\":\"c\"}]}");
         }));
 

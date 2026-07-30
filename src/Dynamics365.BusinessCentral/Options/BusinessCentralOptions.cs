@@ -49,6 +49,22 @@ public sealed class BusinessCentralOptions
     /// <summary>Controls automatic retrying of throttled and transient failures.</summary>
     public BusinessCentralRetryOptions Retry { get; set; } = new();
 
+    /// <summary>
+    /// Maximum rows per page requested on streaming reads (<c>QueryAllAsync</c>,
+    /// <c>QueryStreamAsync</c>, the fluent <c>StreamAsync</c>/<c>ToAllAsync</c>), sent as
+    /// <c>Prefer: odata.maxpagesize={value}</c>. Defaults to <see langword="null"/> —
+    /// <b>no preference is sent</b>, and Business Central pages at its own configured
+    /// Max Page Size (20,000 online; the server setting on-premises), driving continuation
+    /// via <c>@odata.nextLink</c>.
+    /// </summary>
+    /// <remarks>
+    /// The server clamps the preference to its own maximum, so a large value cannot raise
+    /// a deployment's ceiling — this can only ask for <i>smaller</i> pages, e.g. to bound
+    /// per-response memory or avoid timeouts on slow pages. Override per query with
+    /// <c>QueryOptions.WithPageSize</c> / the fluent <c>PageSize(n)</c>.
+    /// </remarks>
+    public int? MaxPageSize { get; set; }
+
     /// <summary><see cref="BaseUrl"/> with all placeholders substituted.</summary>
     internal string ResolvedBaseUrl => ResolvePlaceholders(BaseUrl);
 

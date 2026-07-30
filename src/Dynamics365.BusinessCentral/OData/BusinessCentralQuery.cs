@@ -125,7 +125,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
     public async Task<List<TEntity>> ToListAsync(CancellationToken cancellationToken = default)
     {
         var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, BuildOptions(), SelectOrNull, cancellationToken)
+            .FetchPageAsync<TEntity>(_path, FilterValue, BuildOptions(), SelectOrNull, null, cancellationToken)
             .ConfigureAwait(false);
 
         return page.Value;
@@ -137,7 +137,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         options.WithCount();
 
         var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, cancellationToken)
+            .FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, null, cancellationToken)
             .ConfigureAwait(false);
 
         return new BusinessCentralPage<TEntity>(page.Value, page.Count, page.NextLink);
@@ -157,26 +157,34 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // The paging state machine lives in QueryPager, shared with the path-based
-        // QueryStreamAsync; only the fetch delegates differ.
+        // QueryStreamAsync; only the fetch delegates differ. Paging is server-driven: the
+        // per-query PageSize (else the registration-level MaxPageSize, else nothing) is
+        // sent as Prefer: odata.maxpagesize and continuation follows @odata.nextLink.
+        var maxPageSize = _pageSize ?? _executor.DefaultMaxPageSize;
+
         var stream = QueryPager.StreamAsync(
             _top,
-            _pageSize ?? QueryPager.DefaultPageSize,
             _skip ?? 0,
-            FetchAsync,
-            _executor.FetchNextPageAsync<TEntity>,
+            (top, skip, ct) => FetchAsync(top, skip, maxPageSize, ct),
+            (link, ct) => _executor.FetchNextPageAsync<TEntity>(link, maxPageSize, ct),
             cancellationToken);
 
         await foreach (var entity in stream.ConfigureAwait(false))
             yield return entity;
     }
 
-    private Task<ODataResponse<TEntity>> FetchAsync(int top, int skip, CancellationToken cancellationToken)
+    private Task<ODataResponse<TEntity>> FetchAsync(
+        int? top,
+        int skip,
+        int? maxPageSize,
+        CancellationToken cancellationToken)
     {
         var options = BuildOptions();
         options.Top = top;
-        options.Skip = skip;
+        options.Skip = skip == 0 ? null : skip;
 
-        return _executor.FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, cancellationToken);
+        return _executor.FetchPageAsync<TEntity>(
+            _path, FilterValue, options, SelectOrNull, maxPageSize, cancellationToken);
     }
 
     public async Task<TEntity?> FirstOrDefaultAsync(CancellationToken cancellationToken = default)
@@ -185,7 +193,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         options.Top = 1;
 
         var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, cancellationToken)
+            .FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, null, cancellationToken)
             .ConfigureAwait(false);
 
         return page.Value.Count == 0 ? default : page.Value[0];
@@ -198,7 +206,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         options.Top = 0;
 
         var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, cancellationToken)
+            .FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, null, cancellationToken)
             .ConfigureAwait(false);
 
         if (page.Count is { } count)

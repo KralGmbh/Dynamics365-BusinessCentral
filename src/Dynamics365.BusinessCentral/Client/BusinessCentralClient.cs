@@ -175,7 +175,9 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         var queryOptions = new QueryOptions();
         options?.Invoke(queryOptions);
 
-        var page = await FetchPageAsync<TEntity>(path, filter, queryOptions, select, cancellationToken)
+        // Single page: no odata.maxpagesize preference — it would silently truncate a
+        // one-shot request to the first server page.
+        var page = await FetchPageAsync<TEntity>(path, filter, queryOptions, select, null, cancellationToken)
             .ConfigureAwait(false);
 
         return page.Value;
@@ -231,29 +233,35 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
 
         var filterValue = filter?.Value ?? string.Empty;
 
-        // Top is a result cap, exactly as documented on WithTop; PageSize sizes the round
-        // trips. The paging state machine itself lives in QueryPager, shared with the
-        // fluent builder. baseOptions.Skip is honoured as the starting offset instead of
-        // silently restarting from the first page.
+        // Top is a result cap, exactly as documented on WithTop. Paging is server-driven:
+        // the per-query PageSize (else the registration-level MaxPageSize, else nothing)
+        // is sent as Prefer: odata.maxpagesize, and the server pages via @odata.nextLink.
+        // baseOptions.Skip is honoured as the starting offset of the first request.
+        var maxPageSize = baseOptions.PageSize ?? _options.MaxPageSize;
+
         var stream = QueryPager.StreamAsync(
             baseOptions.Top,
-            baseOptions.PageSize ?? QueryPager.DefaultPageSize,
             baseOptions.Skip ?? 0,
             (top, skip, ct) => FetchPageAsync<TEntity>(
-                path, filterValue, PageOptions(baseOptions, top, skip), select, ct),
-            FetchNextPageAsync<TEntity>,
+                path, filterValue, PageOptions(baseOptions, top, skip), select, maxPageSize, ct),
+            (link, ct) => FetchNextPageAsync<TEntity>(link, maxPageSize, ct),
             cancellationToken);
 
         await foreach (var entity in stream.ConfigureAwait(false))
             yield return entity;
     }
 
-    private static QueryOptions PageOptions(QueryOptions baseOptions, int top, int skip)
+    /// <summary>
+    /// Options for the first request of a stream: the caller's cap and starting offset,
+    /// plus everything shareable from the base options. Continuations use the server's
+    /// nextLink verbatim instead.
+    /// </summary>
+    private static QueryOptions PageOptions(QueryOptions baseOptions, int? top, int skip)
     {
         var options = new QueryOptions
         {
             Top = top,
-            Skip = skip,
+            Skip = skip == 0 ? null : skip,
             IncludeCount = baseOptions.IncludeCount
         };
 
@@ -266,30 +274,35 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         return options;
     }
 
+    int? IBusinessCentralQueryExecutor.DefaultMaxPageSize => _options.MaxPageSize;
+
     async Task<ODataResponse<TEntity>> IBusinessCentralQueryExecutor.FetchPageAsync<TEntity>(
         string path,
         string filter,
         QueryOptions options,
         IEnumerable<string>? select,
+        int? maxPageSize,
         CancellationToken cancellationToken)
-        => await FetchPageAsync<TEntity>(path, filter, options, select, cancellationToken).ConfigureAwait(false);
+        => await FetchPageAsync<TEntity>(path, filter, options, select, maxPageSize, cancellationToken).ConfigureAwait(false);
 
     async Task<ODataResponse<TEntity>> IBusinessCentralQueryExecutor.FetchNextPageAsync<TEntity>(
         string absoluteUrl,
+        int? maxPageSize,
         CancellationToken cancellationToken)
-        => await FetchNextPageAsync<TEntity>(absoluteUrl, cancellationToken).ConfigureAwait(false);
+        => await FetchNextPageAsync<TEntity>(absoluteUrl, maxPageSize, cancellationToken).ConfigureAwait(false);
 
     private async Task<ODataResponse<TEntity>> FetchPageAsync<TEntity>(
         string path,
         string filter,
         QueryOptions options,
         IEnumerable<string>? select,
+        int? maxPageSize,
         CancellationToken cancellationToken)
     {
         var url = _urlBuilder.BuildQueryUrl(path, filter, options, select);
 
         using var res = await SendWithAuthRetryAsync(
-            () => CreateJsonRequest(HttpMethod.Get, url), cancellationToken).ConfigureAwait(false);
+            () => CreatePageRequest(url, maxPageSize), cancellationToken).ConfigureAwait(false);
 
         return await DeserializeAsync<ODataResponse<TEntity>>(
             res,
@@ -299,15 +312,31 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
 
     private async Task<ODataResponse<TEntity>> FetchNextPageAsync<TEntity>(
         string absoluteUrl,
+        int? maxPageSize,
         CancellationToken cancellationToken)
     {
+        // The nextLink is sent verbatim — it arrives pre-encoded and carries an opaque
+        // $skiptoken; rebuilding it would corrupt the cursor. The maxpagesize preference
+        // is re-sent because it applies per request, not per cursor.
         using var res = await SendWithAuthRetryAsync(
-            () => CreateJsonRequest(HttpMethod.Get, absoluteUrl), cancellationToken).ConfigureAwait(false);
+            () => CreatePageRequest(absoluteUrl, maxPageSize), cancellationToken).ConfigureAwait(false);
 
         return await DeserializeAsync<ODataResponse<TEntity>>(
             res,
             "Failed to deserialize Business Central response.",
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private static HttpRequestMessage CreatePageRequest(string url, int? maxPageSize)
+    {
+        var req = CreateJsonRequest(HttpMethod.Get, url);
+
+        // The public setters reject non-positive sizes; internal ones fall back to "no
+        // preference" rather than sending the server a nonsense value.
+        if (maxPageSize is { } size && size > 0)
+            req.AddMaxPageSizePreference(size);
+
+        return req;
     }
 
     private static HttpRequestMessage CreateJsonRequest(HttpMethod method, string url, object? payload = null)

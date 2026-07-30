@@ -821,32 +821,28 @@ public partial class ClientTests
         Assert.Contains(requests, r => r.Contains("$top=25"));
     }
 
+    // The default is server-driven: no $top, no page preference — the deployment's own
+    // Max Page Size paces the stream and drives continuation via @odata.nextLink
+    // (verified against a live BC SaaS tenant).
     [Fact]
-    public async Task QueryAll_Uses_Default_Page_Size_When_Not_Set()
+    public async Task QueryAll_Sends_No_Top_And_No_Page_Preference_By_Default()
     {
-        // Arrange
         string? capturedUrl = null;
-        var client = TestBase.CreateClient(req =>
+        string? preferHeader = null;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(req =>
         {
-            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
-                };
-
             capturedUrl = req.RequestUri!.ToString();
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("{\"value\":[]}")
-            };
-        });
+            preferHeader = req.Headers.TryGetValues("Prefer", out var v) ? string.Join(",", v) : null;
+            return TestBase.Json("{\"value\":[]}");
+        }));
 
-        // Act
         await client.QueryAllAsync<TestEntity>("orders");
 
-        // Assert
         Assert.NotNull(capturedUrl);
-        Assert.Contains("$top=1000", capturedUrl);
+        Assert.DoesNotContain("$top", capturedUrl);
+        Assert.DoesNotContain("$skip", capturedUrl);
+        Assert.Null(preferHeader);
     }
 
     [Fact]
@@ -2048,40 +2044,40 @@ public partial class ClientTests
         Assert.Equal(1, dataCalls);
     }
 
+    // WithPageSize is a server preference (Prefer: odata.maxpagesize), re-sent on every
+    // continuation because it applies per request, not per cursor.
     [Fact]
-    public async Task QueryAll_Pages_Until_Short_Page()
+    public async Task QueryAll_Requests_Page_Size_Via_Prefer_And_Follows_NextLinks()
     {
         var dataCalls = 0;
+        var preferHeaders = new List<string?>();
 
-        var client = TestBase.CreateClient(req =>
+        var client = TestBase.CreateClient(TestBase.WithToken(req =>
         {
-            if (req.RequestUri!.AbsoluteUri.Contains("auth"))
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"access_token\":\"abc\",\"expires_in\":3600}")
-                };
-
             dataCalls++;
+            preferHeaders.Add(req.Headers.TryGetValues("Prefer", out var v) ? string.Join(",", v) : null);
 
-            // Two full pages of 2, then a short page.
-            var body = dataCalls <= 2
-                ? "{\"value\":[{\"id\":1},{\"id\":2}]}"
-                : "{\"value\":[{\"id\":3}]}";
-
-            return new HttpResponseMessage(HttpStatusCode.OK)
+            // Two pages with continuations, then a final page without one.
+            var body = dataCalls switch
             {
-                Content = new StringContent(body)
+                1 => "{\"value\":[{\"id\":1},{\"id\":2}],\"@odata.nextLink\":\"https://test/p2\"}",
+                2 => "{\"value\":[{\"id\":3},{\"id\":4}],\"@odata.nextLink\":\"https://test/p3\"}",
+                _ => "{\"value\":[{\"id\":5}]}"
             };
-        });
+
+            return TestBase.Json(body);
+        }));
 
         var result = await client.QueryAllAsync<TestEntity>("orders", options: o => o.WithPageSize(2));
 
         Assert.Equal(5, result.Count);
         Assert.Equal(3, dataCalls);
+        Assert.All(preferHeaders, h => Assert.Equal("odata.maxpagesize=2", h));
     }
 
-    // Top is a result cap here, exactly as its documentation says — the same contract as
-    // the fluent builder's Top(). It used to be silently repurposed as the page size.
+    // Top is a result cap: sent to the server as $top on the first request (so a capped
+    // query is never over-served) and enforced client-side mid-page while nextLinks are
+    // followed.
     [Fact]
     public async Task QueryAll_Honours_Top_As_A_Result_Cap()
     {
@@ -2093,7 +2089,11 @@ public partial class ClientTests
             dataCalls++;
             requests.Add(req.RequestUri!.ToString());
 
-            return TestBase.Json("{\"value\":[{\"id\":1},{\"id\":2}]}");
+            var body = dataCalls == 1
+                ? "{\"value\":[{\"id\":1},{\"id\":2}],\"@odata.nextLink\":\"https://test/p2\"}"
+                : "{\"value\":[{\"id\":3},{\"id\":4}]}";
+
+            return TestBase.Json(body);
         }));
 
         var result = await client.QueryAllAsync<TestEntity>(
@@ -2102,9 +2102,51 @@ public partial class ClientTests
         Assert.Equal(3, result.Count);
         Assert.Equal(2, dataCalls);
 
-        // The second request never overshoots the cap: only one row is still wanted.
-        Assert.Contains("$top=2", requests[0]);
-        Assert.Contains("$top=1", requests[1]);
+        // The cap rides the first request; continuation follows the server's link.
+        Assert.Contains("$top=3", requests[0]);
+        Assert.Equal("https://test/p2", requests[1]);
+    }
+
+    // Single-page reads never send the page preference — it would silently truncate a
+    // one-shot request to the first server page.
+    [Fact]
+    public async Task Single_Page_Query_Never_Sends_The_Page_Preference()
+    {
+        string? preferHeader = null;
+
+        var client = TestBase.CreateClient(
+            TestBase.WithToken(req =>
+            {
+                preferHeader = req.Headers.TryGetValues("Prefer", out var v) ? string.Join(",", v) : null;
+                return TestBase.Json("{\"value\":[]}");
+            }),
+            configure: o => o.MaxPageSize = 500);
+
+        await client.QueryAsync<TestEntity>("orders", "true");
+
+        Assert.Null(preferHeader);
+    }
+
+    // The registration-level MaxPageSize is the streaming default; a per-query
+    // WithPageSize overrides it.
+    [Fact]
+    public async Task Options_MaxPageSize_Is_The_Streaming_Default_And_PageSize_Overrides_It()
+    {
+        var preferHeaders = new List<string?>();
+
+        var client = TestBase.CreateClient(
+            TestBase.WithToken(req =>
+            {
+                preferHeaders.Add(req.Headers.TryGetValues("Prefer", out var v) ? string.Join(",", v) : null);
+                return TestBase.Json("{\"value\":[]}");
+            }),
+            configure: o => o.MaxPageSize = 500);
+
+        await client.QueryAllAsync<TestEntity>("orders");
+        await client.QueryAllAsync<TestEntity>("orders", options: o => o.WithPageSize(50));
+
+        Assert.Equal("odata.maxpagesize=500", preferHeaders[0]);
+        Assert.Equal("odata.maxpagesize=50", preferHeaders[1]);
     }
 
     [Fact]
