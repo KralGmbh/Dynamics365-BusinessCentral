@@ -207,6 +207,6 @@ public class OptionsTests
     {
         Assert.Equal("false", Dynamics365.BusinessCentral.OData.Filter.In("id").Value);
         Assert.Equal("false", Dynamics365.BusinessCentral.OData.Filter.In("id", Array.Empty<object>()).Value);
-        Assert.Equal("id in ('a','b')", Dynamics365.BusinessCentral.OData.Filter.In("id", "a", "b").Value);
+        Assert.Equal("(id eq 'a') or (id eq 'b')", Dynamics365.BusinessCentral.OData.Filter.In("id", "a", "b").Value);
     }
 }

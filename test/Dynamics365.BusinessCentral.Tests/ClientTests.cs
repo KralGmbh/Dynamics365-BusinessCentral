@@ -1519,7 +1519,11 @@ public partial class ClientTests
         // Assert
         var filterValue = ExtractFilter(capturedUrl);
 
-        Assert.Equal("status in ('active','pending','processing')", filterValue);
+        // A same-field or-chain, not the `in` operator — BC rejects `in` without
+        // $schemaversion=2.1.
+        Assert.Equal(
+            "(status eq 'active') or (status eq 'pending') or (status eq 'processing')",
+            filterValue);
     }
 
     [Fact]

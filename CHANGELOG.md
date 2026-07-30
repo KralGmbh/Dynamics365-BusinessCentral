@@ -7,6 +7,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Filter.In` works against real Business Central tenants.** It rendered the OData `in`
+  operator, which Business Central only accepts with `$schemaversion=2.1` — on a stock
+  endpoint the server answers `BadRequest_MethodNotImplemented` (verified live). It now
+  renders an equivalent same-field `or`-chain (`(f eq v1) or (f eq v2) …`), which is
+  supported on every schema version. Empty-collection semantics are unchanged (`false`);
+  a single value collapses to a plain `eq`.
+- **Documented a Business Central limitation on `.Or(...)`**: `or` between filters on
+  *different* fields has no AL equivalent and is rejected by the server. Same-field `or`
+  and `.And(...)` are unaffected.
+
 ## [2.0.0-alpha.3] - 2026-07-30
 
 **Prerelease.** The final validation build before 2.0.0 stable: robustness fixes from a

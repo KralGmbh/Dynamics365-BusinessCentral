@@ -32,12 +32,38 @@ public class FilterFormatTests
         Assert.Equal("(postingDate ge 2026-01-01) and (postingDate lt 2027-01-01)", filter.Value);
     }
 
+    // Filter.In renders a same-field or-chain, NOT the OData `in` operator: Business
+    // Central rejects `in` without $schemaversion=2.1 (BadRequest_MethodNotImplemented,
+    // verified against a live tenant), while same-field `or` works everywhere.
+    [Fact]
+    public void In_Renders_A_Same_Field_Or_Chain()
+    {
+        var filter = Filter.In("status", "active", "pending");
+
+        Assert.Equal("(status eq 'active') or (status eq 'pending')", filter.Value);
+    }
+
+    [Fact]
+    public void In_With_A_Single_Value_Collapses_To_Eq()
+    {
+        var filter = Filter.In("status", "active");
+
+        Assert.Equal("status eq 'active'", filter.Value);
+    }
+
+    [Fact]
+    public void In_With_No_Values_Matches_Nothing()
+    {
+        Assert.Equal("false", Filter.In("status").Value);
+        Assert.Equal("false", Filter.In("status", Enumerable.Empty<object>()).Value);
+    }
+
     [Fact]
     public void DateOnly_Works_In_In_Filters()
     {
         var filter = Filter.In("postingDate", new DateOnly(2026, 7, 1), new DateOnly(2026, 7, 2));
 
-        Assert.Equal("postingDate in (2026-07-01,2026-07-02)", filter.Value);
+        Assert.Equal("(postingDate eq 2026-07-01) or (postingDate eq 2026-07-02)", filter.Value);
     }
 
     // A kindless DateTime (parsed from config, loaded from a database) used to be run
