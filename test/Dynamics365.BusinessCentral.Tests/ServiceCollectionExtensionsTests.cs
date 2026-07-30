@@ -186,6 +186,36 @@ public class ServiceCollectionExtensionsTests
         Assert.Equal(1, tokenCalls);
     }
 
+    [Fact]
+    public void RequestTimeout_Is_Applied_To_The_Data_Client()
+    {
+        var services = new ServiceCollection();
+        services.AddBusinessCentral(options =>
+        {
+            DefaultOptions(options);
+            options.RequestTimeout = TimeSpan.FromSeconds(60);
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+
+        Assert.Equal(TimeSpan.FromSeconds(60),
+            factory.CreateClient(BusinessCentralHttpClients.Client).Timeout);
+    }
+
+    [Fact]
+    public void RequestTimeout_Defaults_To_The_HttpClient_Default()
+    {
+        var services = new ServiceCollection();
+        services.AddBusinessCentral(DefaultOptions);
+
+        using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+
+        Assert.Equal(TimeSpan.FromSeconds(100),
+            factory.CreateClient(BusinessCentralHttpClients.Client).Timeout);
+    }
+
     private class TestObserver : IBusinessCentralObserver
     {
         public void OnRequestStarting(BusinessCentralRequestInfo info) { }

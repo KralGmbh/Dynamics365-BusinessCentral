@@ -146,6 +146,28 @@ now a result cap, as documented. A call like `QueryAllAsync(..., o => o.WithTop(
 that used to fetch *everything* in pages of 500 now returns at most 500 rows. Replace it
 with `WithPageSize(500)` to keep the old behaviour — see §3.
 
+### The fluent builder derives `$select` from the entity type
+
+A `Query<T>()` call with no explicit `Select(...)` used to request **every column**; it now
+sends a `$select` derived from `T`'s settable scalar properties — the columns the type can
+actually hold. This can only narrow the data requested, so anything that deserialized
+before still deserializes. `.SelectAll()` restores the full row for deliberately partial
+entity types. The path-based `QueryAsync(select:)` is unchanged.
+
+**One migration caveat:** `$select` is case-sensitive on the server while deserialization
+is not. A `[JsonPropertyName]` value whose casing drifts from `$metadata` worked silently
+before and now fails with a loud `400` naming the field — verify your wire names against
+`$metadata` once when adopting the fluent builder.
+
+### Message-level retry policies must re-key their exceptions
+
+An outer retry policy (Wolverine, MassTransit, Polly) keyed on `HttpRequestException`
+**silently stops matching** in 2.0: the client wraps transport failures in
+`BusinessCentralConnectionException`. Match that type (or `ex.IsTransient`), and give
+`BusinessCentralThrottledException` a slower curve — the client has already honoured
+`Retry-After` in-process. See the README's *"Mapping exceptions in message-level retry
+policies"* table.
+
 ### Kindless `DateTime` filters are no longer shifted by the machine's timezone
 
 1.0 passed every `DateTime` through `ToUniversalTime()`, which treats
