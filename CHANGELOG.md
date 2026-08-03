@@ -37,6 +37,36 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
   (`Url`, `Length`, `Threshold`, `Limit`, `ExceedsLimit`, `OrClauseCount`). A default
   interface method, so existing observers keep compiling.
 
+- **`BusinessCentralMetadata` in the Testing package (M4): the derived-`$select` hazard is now
+  checkable in CI**, not just documented.
+
+  ```csharp
+  await BusinessCentralMetadata.AssertProjectionsResolveAsync(client, typeof(Item).Assembly);
+  ```
+
+  Fetches the tenant's `$metadata`, derives the `$select` for every `[BusinessCentralEntity]`
+  type, and throws listing **every** name that matches no column — not the first, because the
+  alternative is learning the same thing one production `400` at a time. `ValidateAsync`
+  returns the report instead of throwing; `Parse` and `Validate` are pure and take a canned
+  document, so the half with the logic in it is unit-testable without a tenant.
+
+  This ships **with** F2 rather than after it, because separating them is what would have made
+  default-on risky: nothing between "upgrade" and "production" otherwise detects a property
+  that is not a column. A consumer's unit suite cannot — mocks do not validate `$select`, and
+  neither does `FakeBusinessCentral`, which proves what OData you generate and never what the
+  tenant accepts. Column matching is case-**insensitive**, following the measurement above; an
+  ordinal match here would report working projections as broken.
+
+- **`IBusinessCentralClient.GetMetadataAsync`** returns the raw `$metadata` EDMX as a string.
+  A default interface method. Deliberately not parsed into a model: the package does not own an
+  EDMX object model and inventing one would be a lasting compatibility liability. The document
+  is large (~8 MB on a real tenant), so it is a build- or startup-time call.
+
+- **`EntitySelect` is public**, with a non-generic `For(Type)` for callers that discover entity
+  types by reflection. It was internal; the Testing package depends only on the main package's
+  public API, and the validator needs exactly the projection the fluent builder would send —
+  reimplementing those rules is precisely the drift this feature exists to prevent.
+
 ### Fixed
 
 - **A `400` caused by the derived `$select` now explains itself.** The projection is derived
@@ -79,15 +109,7 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
 - README: a *"URL length and bulk key lookups"* section covering both settings, the observer
   callback and the `or`-chain arithmetic.
 
-### Deferred to 2.1
-
-- **A `$metadata` projection validator in the Testing package** (M4), shaped as
-  `BusinessCentralMetadata.AssertProjectionsResolve(client, assembly)`: check every
-  `[BusinessCentralEntity]` type's derived `$select` against live `$metadata` and report all
-  offending names at once. It would turn the MIGRATION checklist item above into one CI
-  assertion — worth doing because the failure it guards is introduced by *adding a property*,
-  an edit nobody associates with a query breaking. Held back because it needs a live tenant
-  and a real token, making it an integration helper whose design should not gate 2.0.
+- Testing package README: the projection validator, and what it does and does not prove.
 
 ## [2.0.0-alpha.6] - 2026-07-30
 

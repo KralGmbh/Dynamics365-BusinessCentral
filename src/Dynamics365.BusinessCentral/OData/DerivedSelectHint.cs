@@ -37,7 +37,7 @@ internal static class DerivedSelectHint
     /// </summary>
     public static BusinessCentralValidationException Decorate<TEntity>(
         BusinessCentralValidationException ex,
-        string[] derived)
+        IReadOnlyList<string> derived)
     {
         var decorated = new BusinessCentralValidationException(
             $"{ex.ServerMessage} {BuildHint<TEntity>(ex, derived)}",
@@ -57,14 +57,14 @@ internal static class DerivedSelectHint
 
     private static string BuildHint<TEntity>(
         BusinessCentralValidationException ex,
-        string[] derived)
+        IReadOnlyList<string> derived)
     {
         var entity = typeof(TEntity).Name;
         var named = FindImplicatedField(ex, derived);
 
         var opening = string.Create(
             CultureInfo.InvariantCulture,
-            $"This query sent a $select derived from {entity} ({derived.Length} properties, no explicit Select())");
+            $"This query sent a $select derived from {entity} ({derived.Count} properties, no explicit Select())");
 
         var subject = named is null
             ? "; if Business Central does not expose one of them as a column on this entity set, "
@@ -95,7 +95,9 @@ internal static class DerivedSelectHint
     /// deployment that does substitute: the cost of being wrong is a hint that says "one of
     /// them" instead of naming the field, and that is a better failure than silence.
     /// </remarks>
-    private static string? FindImplicatedField(BusinessCentralValidationException ex, string[] derived)
+    private static string? FindImplicatedField(
+        BusinessCentralValidationException ex,
+        IReadOnlyList<string> derived)
     {
         var haystack = ex.ServerMessage;
 
@@ -105,8 +107,8 @@ internal static class DerivedSelectHint
         if (string.IsNullOrWhiteSpace(haystack))
             return null;
 
-        return Array.Find(derived, name => haystack.Contains($"'{name}'", StringComparison.OrdinalIgnoreCase))
-            ?? Array.Find(derived, name => ContainsAsWord(haystack, name));
+        return derived.FirstOrDefault(name => haystack.Contains($"'{name}'", StringComparison.OrdinalIgnoreCase))
+            ?? derived.FirstOrDefault(name => ContainsAsWord(haystack, name));
     }
 
     private static bool ContainsAsWord(string haystack, string needle)

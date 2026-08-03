@@ -47,10 +47,16 @@
             roughly four times per key what "in (...)" would.
 
             Also: a 400 caused by the derived $select now explains where the projection came
-            from and how to opt out. IMPORTANT — a property mapping to no Business Central
-            column fails such a query outright, which alpha.6's documentation wrongly
-            described as merely surfacing existing drift. See MIGRATION.md before upgrading
-            from alpha.6.
+            from and how to opt out, and the companion Testing package ships
+            BusinessCentralMetadata.AssertProjectionsResolveAsync — one assertion that checks
+            every entity type's derived $select against a tenant's live $metadata and reports
+            every unresolved name at once.
+
+            IMPORTANT — a property mapping to no Business Central column fails such a query
+            outright, which alpha.6's documentation wrongly described as merely surfacing
+            existing drift. alpha.6 also claimed $select was case-sensitive server-side;
+            live-tenant measurement showed the opposite, and that claim is retracted. See
+            MIGRATION.md before upgrading from alpha.6.
 
             Breaking changes — see the migration guide before upgrading:
             https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/MIGRATION.md

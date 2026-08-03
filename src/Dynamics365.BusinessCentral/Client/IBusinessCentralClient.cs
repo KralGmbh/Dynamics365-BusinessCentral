@@ -61,6 +61,21 @@ public interface IBusinessCentralClient
         throw NotImplemented(nameof(GetCompaniesAsync));
 
     /// <summary>
+    /// Fetches the tenant's raw <c>$metadata</c> document (EDMX XML) from the service root.
+    /// </summary>
+    /// <remarks>
+    /// Returned as a string rather than a parsed model on purpose: the package does not own
+    /// an EDMX object model, and inventing one would be a permanent compatibility liability.
+    /// The document is large — a real tenant measured ~8 MB across 542 entity sets — so treat
+    /// this as a build- or startup-time call, not a per-request one. The
+    /// <c>Dynamics365.BusinessCentral.Testing</c> package consumes it to check that every
+    /// derived <c>$select</c> resolves against the tenant's actual columns.
+    /// </remarks>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<string> GetMetadataAsync(CancellationToken cancellationToken = default) =>
+        throw NotImplemented(nameof(GetMetadataAsync));
+
+    /// <summary>
     /// Executes an OData query against a Business Central entity and returns the matching entities.
     /// </summary>
     /// <typeparam name="TEntity">The entity type to deserialize the OData result into.</typeparam>

@@ -134,6 +134,26 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     }
 
     /// <inheritdoc />
+    public async Task<string> GetMetadataAsync(CancellationToken cancellationToken = default)
+    {
+        // $metadata is EDMX XML at the service root, so it needs neither the company segment
+        // nor the JSON Accept header — and its '$' must survive unencoded.
+        var url = _urlBuilder.BuildMetadataUrl();
+
+        using var res = await SendWithAuthRetryAsync(
+            () => CreateMetadataRequest(url), cancellationToken).ConfigureAwait(false);
+
+        return await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static HttpRequestMessage CreateMetadataRequest(string url)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.AddMetadataHeaders();
+        return req;
+    }
+
+    /// <inheritdoc />
     public async Task<TEntity?> GetAsync<TEntity>(
         string path,
         string key,

@@ -25,6 +25,19 @@ internal static class HttpRequestExtensions
     }
 
     /// <summary>
+    /// Headers for the <c>$metadata</c> document, which is EDMX XML rather than JSON —
+    /// asking for <c>application/json</c> there is at best ignored and at worst a 406.
+    /// </summary>
+    public static void AddMetadataHeaders(this HttpRequestMessage request)
+    {
+        request.Headers.Accept.Clear();
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/xml"));
+
+        if (request.Headers.UserAgent.Count == 0)
+            request.Headers.UserAgent.ParseAdd(UserAgent);
+    }
+
+    /// <summary>
     /// Asks Business Central to return the affected entity in the response body so a
     /// write does not come back as a bare 204 NoContent.
     /// </summary>

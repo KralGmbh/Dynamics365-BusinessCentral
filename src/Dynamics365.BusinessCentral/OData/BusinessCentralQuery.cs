@@ -280,7 +280,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
     private IEnumerable<string>? SelectOrNull =>
         _select.Count > 0 ? _select
         : _selectAll ? null
-        : EntitySelect.For<TEntity>() is { Length: > 0 } derived ? derived : null;
+        : EntitySelect.For<TEntity>() is { Count: > 0 } derived ? derived : null;
 
     private QueryOptions BuildOptions()
     {

@@ -123,8 +123,14 @@ properties are excluded automatically.
 > enters `$select` and the whole request fails with a `400` naming the field. Remedy with
 > `[JsonIgnore]` on the property or `.SelectAll()` on the query — the exception message
 > names both. Watch for a shared base class of system fields inherited by entity sets that
-> do not all expose them, and probe `$metadata` once when adopting this to catch every such
-> property at once.
+> do not all expose them.
+>
+> **Catch it in CI, not in production.** No unit suite detects this — mocks do not validate
+> `$select`, and neither does a transport fake. The Testing package ships a one-line check:
+> ```csharp
+> await BusinessCentralMetadata.AssertProjectionsResolveAsync(client, typeof(Item).Assembly);
+> ```
+> See [Testing](#-testing).
 >
 > **Casing is not a problem.** `$select` was measured **case-insensitive** on Business
 > Central SaaS — three spellings of one column all returned `200`, and the server answers in
@@ -506,3 +512,23 @@ Multi-page responses (`EnqueuePage(..., nextLink: "page2")`), failures by status
 exception subtype) and network failures are all scriptable; token acquisition is answered
 automatically. For stateful fakes, every `IBusinessCentralClient` member has a default
 implementation, so a hand-written fake implements only the members it uses.
+
+## Validating projections against a real tenant
+
+A transport fake proves what OData you generate, never what Business Central accepts — so it
+cannot tell you whether a derived `$select` names a real column. That gap has a dedicated
+check, which needs a live (non-production) tenant:
+
+```csharp
+[Fact]  // integration test, pointed at a sandbox tenant
+public async Task Every_entity_projection_resolves()
+    => await BusinessCentralMetadata.AssertProjectionsResolveAsync(
+           _client, typeof(Item).Assembly);
+```
+
+It derives the `$select` for every `[BusinessCentralEntity]` type in the assembly and fails
+listing **every** name that matches no column, so one run tells you everything rather than one
+`400` at a time. `ValidateAsync` returns the report instead of throwing.
+
+Worth running on every build rather than once at upgrade: the failure is introduced by *adding
+a property*, which is not an edit anyone associates with a query breaking.

@@ -177,13 +177,31 @@ fields is the exact shape to check.
 > on-premises runs a different OData stack and was not measured, so this is "not
 > case-sensitive where measured", not a guarantee.)
 
-**Do this once, before you rely on it:** fetch `$metadata` and compare the column names
-offline against the properties on your entity classes. It finds every non-column for every
-type at once, with no production risk, and it is much cheaper than meeting them one `400`
-at a time. Field result from the one production codebase this was run against: 13 entity
-types, 118 derived columns, **zero** missing — including the inherited `SystemId` /
+**Check this, and keep checking it.** The Testing package ships a validator:
+
+```csharp
+await BusinessCentralMetadata.AssertProjectionsResolveAsync(client, typeof(Item).Assembly);
+```
+
+It fetches `$metadata`, derives the `$select` for every `[BusinessCentralEntity]` type, and
+fails listing **every** name that matches no column. One assertion, no production risk.
+
+Run it as a one-off before upgrading if you like, but it earns its place as a standing
+integration test, because **your unit suite cannot catch this**. Mocks of
+`IBusinessCentralClient` do not validate `$select`, and neither does `FakeBusinessCentral` —
+a transport fake proves what OData you generate, never what your tenant accepts. Without
+this check the sequence is *upgrade → tests green → production incident*. And the failure is
+introduced by **adding a property**, an edit nobody associates with a query breaking, which
+is why a check that runs on every build beats one you perform once.
+
+Field result from the one production codebase measured before this shipped: 13 entity types,
+118 derived columns, **zero** missing — including the inherited `SystemId` /
 `SystemCreatedAt` / `SystemModifiedAt` shape above, which existed on all five custom
-published pages. The risk is real but it did not materialise there.
+published pages. Read that as *the failure is not ubiquitous*, not *the failure is rare*:
+those classes were written per use as BC projections, and most of those columns were already
+being named in explicit `select:` lists that had run in production for months. The shapes
+most at risk look different — one broad shared class with convenience properties, a
+speculatively added field, a class that outlived a schema change.
 
 **Remedies**, both already present: `[JsonIgnore]` on a property drops it from the
 projection permanently; `.SelectAll()` on a query sends no `$select` at all. Since
@@ -375,9 +393,9 @@ There is no deprecation on the path-based API; migrate at your own pace, or not 
 - [ ] Replace `WithTop` used as a page size with `WithPageSize`
 - [ ] Check `DateTime` filter values for `Kind=Unspecified` semantics (now read as UTC)
 - [ ] Replace `dynamic` writes with the two-generic overloads
-- [ ] **Probe `$metadata` once per entity set** and diff the column names against your
-      `[JsonPropertyName]` values before relying on the derived `$select` — a property with
-      no matching column now fails the whole query
+- [ ] **Add `BusinessCentralMetadata.AssertProjectionsResolveAsync` as an integration test**
+      — a property with no matching column now fails the whole query, and nothing else in a
+      normal test suite detects it
 - [ ] Check inherited base classes of system fields against the entity sets that inherit
       them; not every published page exposes them
 - [ ] Re-check chunk sizes on bulk key lookups against `MaxUrlLength` (an `or`-chain costs

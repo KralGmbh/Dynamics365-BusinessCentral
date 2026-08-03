@@ -55,11 +55,22 @@ namespace Dynamics365.BusinessCentral.OData;
 /// case-sensitive where measured", not as a guarantee.
 /// </para>
 /// </remarks>
-internal static class EntitySelect
+public static class EntitySelect
 {
     private static readonly ConcurrentDictionary<Type, string[]> _cache = new();
 
-    public static string[] For<TEntity>() => _cache.GetOrAdd(typeof(TEntity), static type =>
+    /// <summary>
+    /// The wire names the fluent builder would send as <c>$select</c> for
+    /// <typeparamref name="TEntity"/>, ordinal-sorted.
+    /// </summary>
+    public static IReadOnlyList<string> For<TEntity>() => For(typeof(TEntity));
+
+    /// <summary>
+    /// Non-generic overload, for callers that discover entity types by reflection — such as
+    /// a build-time check that every projection resolves against a tenant's <c>$metadata</c>.
+    /// </summary>
+    /// <param name="type">The entity type to derive a projection for.</param>
+    public static IReadOnlyList<string> For(Type type) => _cache.GetOrAdd(type, static type =>
         type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
             .Where(p => p.SetMethod is { IsPublic: true })

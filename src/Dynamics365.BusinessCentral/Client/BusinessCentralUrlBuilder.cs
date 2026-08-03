@@ -60,6 +60,15 @@ internal sealed class BusinessCentralUrlBuilder
         return Guard($"{_baseUrl}/{EncodePath(path)}");
     }
 
+    /// <summary>
+    /// Builds the service-document metadata URL. Deliberately not routed through
+    /// <see cref="BuildServiceRootUrl"/>: <c>EncodePath</c> would percent-encode the leading
+    /// '$' into <c>%24metadata</c>, which Business Central does not recognise. Like the
+    /// company list, this lives at the service root — <c>$metadata</c> describes the whole
+    /// tenant, not one company.
+    /// </summary>
+    public string BuildMetadataUrl() => Guard($"{_baseUrl}/$metadata");
+
     private string EntityUrl(string path) =>
         $"{BuildCompanyBase()}/{EncodePath(path)}";
 
