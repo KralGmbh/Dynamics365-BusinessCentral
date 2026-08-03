@@ -1,4 +1,6 @@
+using Dynamics365.BusinessCentral.Diagnostics;
 using Dynamics365.BusinessCentral.OData;
+using System.Globalization;
 using System.Text;
 
 namespace Dynamics365.BusinessCentral.Client;
@@ -7,26 +9,37 @@ internal sealed class BusinessCentralUrlBuilder
 {
     private readonly string _baseUrl;
     private readonly string _company;
+    private readonly int? _maxLength;
+    private readonly int? _warnLength;
+    private readonly IBusinessCentralObserver _observer;
 
-    public BusinessCentralUrlBuilder(string baseUrl, string company)
+    public BusinessCentralUrlBuilder(
+        string baseUrl,
+        string company,
+        int? maxLength = null,
+        int? warnLength = null,
+        IBusinessCentralObserver? observer = null)
     {
         _baseUrl = baseUrl.TrimEnd('/');
         _company = company;
+        _maxLength = maxLength;
+        _warnLength = warnLength;
+        _observer = observer ?? new NullBusinessCentralObserver();
     }
 
     public string BuildEntityUrl(string path)
     {
-        return $"{BuildCompanyBase()}/{EncodePath(path)}";
+        return Guard(EntityUrl(path));
     }
 
     public string BuildEntityUrl(string path, string key)
     {
-        return $"{BuildCompanyBase()}/{EncodePath(path)}({EncodeKey(key)})";
+        return Guard(EntityUrl(path, key));
     }
 
     public string BuildEntityUrl(string path, string key, IEnumerable<string>? select)
     {
-        var url = BuildEntityUrl(path, key);
+        var url = EntityUrl(path, key);
 
         var fields = select?
             .Where(s => !string.IsNullOrWhiteSpace(s))
@@ -35,7 +48,7 @@ internal sealed class BusinessCentralUrlBuilder
         if (fields is { Count: > 0 })
             url += "?$select=" + string.Join(",", fields.Select(Uri.EscapeDataString));
 
-        return url;
+        return Guard(url);
     }
 
     /// <summary>
@@ -44,8 +57,14 @@ internal sealed class BusinessCentralUrlBuilder
     /// </summary>
     public string BuildServiceRootUrl(string path)
     {
-        return $"{_baseUrl}/{EncodePath(path)}";
+        return Guard($"{_baseUrl}/{EncodePath(path)}");
     }
+
+    private string EntityUrl(string path) =>
+        $"{BuildCompanyBase()}/{EncodePath(path)}";
+
+    private string EntityUrl(string path, string key) =>
+        $"{BuildCompanyBase()}/{EncodePath(path)}({EncodeKey(key)})";
 
     /// <summary>
     /// Builds a URL from a caller-supplied relative OData URL that may already carry
@@ -57,12 +76,12 @@ internal sealed class BusinessCentralUrlBuilder
         var split = path.IndexOf('?');
 
         if (split < 0)
-            return BuildEntityUrl(path);
+            return Guard(EntityUrl(path));
 
         var pathPart = path[..split];
         var queryPart = path[(split + 1)..];
 
-        return $"{BuildCompanyBase()}/{EncodePath(pathPart)}?{queryPart}";
+        return Guard($"{BuildCompanyBase()}/{EncodePath(pathPart)}?{queryPart}");
     }
 
     public string BuildQueryUrl(
@@ -71,7 +90,7 @@ internal sealed class BusinessCentralUrlBuilder
         QueryOptions options,
         IEnumerable<string>? select)
     {
-        var url = BuildEntityUrl(path);
+        var url = EntityUrl(path);
 
         var query = new List<string>();
 
@@ -131,7 +150,92 @@ internal sealed class BusinessCentralUrlBuilder
             url += "?" + string.Join("&", query);
         }
 
-        return url;
+        return Guard(url);
+    }
+
+    /// <summary>
+    /// Reports a URL that crossed the warning threshold and refuses one past the hard limit.
+    /// </summary>
+    /// <remarks>
+    /// Guards only URLs this builder assembled. A server-issued <c>@odata.nextLink</c> never
+    /// passes through here — it is sent verbatim, and the server's own limits already applied
+    /// when it produced the link.
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// The URL is longer than the configured <c>MaxUrlLength</c>.
+    /// </exception>
+    private string Guard(string url)
+    {
+        // Nothing configured, or comfortably short: the overwhelming majority of calls.
+        if (_warnLength is not { } warn || url.Length < warn)
+            return _maxLength is { } onlyMax && url.Length > onlyMax
+                ? throw new ArgumentException(BuildTooLongMessage(url, onlyMax))
+                : url;
+
+        var exceedsLimit = _maxLength is { } max && url.Length > max;
+
+        // Warn before throwing, so a deployment measuring URL lengths records the outliers
+        // that were rejected as well as the ones that were sent.
+        _observer.OnUrlLengthWarning(new BusinessCentralUrlLengthInfo
+        {
+            Url = url,
+            Length = url.Length,
+            Threshold = warn,
+            Limit = _maxLength,
+            ExceedsLimit = exceedsLimit,
+            OrClauseCount = CountOrClauses(url)
+        });
+
+        return exceedsLimit
+            ? throw new ArgumentException(BuildTooLongMessage(url, _maxLength!.Value))
+            : url;
+    }
+
+    private static string BuildTooLongMessage(string url, int limit)
+    {
+        var message = new StringBuilder()
+            .Append(CultureInfo.InvariantCulture, $"This request produced a {url.Length:N0}-character URL; the configured limit ")
+            .Append(CultureInfo.InvariantCulture, $"(BusinessCentralOptions.MaxUrlLength) is {limit:N0}. Business Central will ")
+            .Append("reject it before it reaches the entity set, with a 400 or 404 that does not mention length.");
+
+        var orClauses = CountOrClauses(url);
+
+        // The dominant cause, and the one whose cost is least obvious: Filter.In renders a
+        // same-field or-chain because BC rejects the OData 'in' operator, and each encoded
+        // "(field eq 'value') or " runs ~4x the width of the "'value'," it replaces.
+        if (orClauses >= 2)
+        {
+            message
+                .Append(CultureInfo.InvariantCulture, $" The filter contains {orClauses:N0} 'or' clauses — Filter.In renders an ")
+                .Append("or-chain rather than 'in (...)', which Business Central rejects, so a bulk key ")
+                .Append("lookup approaches this limit roughly four times faster than the value count ")
+                .Append("suggests. Chunk the values across several requests.");
+        }
+
+        return message.ToString();
+    }
+
+    /// <summary>
+    /// Counts <c>or</c> clauses in a built URL. The filter is percent-encoded by the time it
+    /// gets here, so the encoded spelling is the one that matches; the literal form is
+    /// counted too because <see cref="BuildRawUrl"/> passes caller-supplied query strings
+    /// through verbatim.
+    /// </summary>
+    private static int CountOrClauses(string url) =>
+        CountOccurrences(url, "%20or%20") + CountOccurrences(url, " or ");
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        var index = 0;
+
+        while ((index = haystack.IndexOf(needle, index, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+            count++;
+            index += needle.Length;
+        }
+
+        return count;
     }
 
     private string BuildCompanyBase()

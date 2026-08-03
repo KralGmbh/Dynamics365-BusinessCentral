@@ -1,3 +1,4 @@
+using Dynamics365.BusinessCentral.Errors;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 
@@ -143,8 +144,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
 
     public async Task<List<TEntity>> ToListAsync(CancellationToken cancellationToken = default)
     {
-        var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, BuildOptions(), SelectOrNull, null, cancellationToken)
+        var page = await ExecutePageAsync(BuildOptions(), SelectOrNull, null, cancellationToken)
             .ConfigureAwait(false);
 
         return page.Value;
@@ -155,8 +155,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         var options = BuildOptions();
         options.WithCount();
 
-        var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, null, cancellationToken)
+        var page = await ExecutePageAsync(options, SelectOrNull, null, cancellationToken)
             .ConfigureAwait(false);
 
         return new BusinessCentralPage<TEntity>(page.Value, page.Count, page.NextLink);
@@ -202,8 +201,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         options.Top = top;
         options.Skip = skip == 0 ? null : skip;
 
-        return _executor.FetchPageAsync<TEntity>(
-            _path, FilterValue, options, SelectOrNull, maxPageSize, cancellationToken);
+        return ExecutePageAsync(options, SelectOrNull, maxPageSize, cancellationToken);
     }
 
     public async Task<TEntity?> FirstOrDefaultAsync(CancellationToken cancellationToken = default)
@@ -211,11 +209,37 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         var options = BuildOptions();
         options.Top = 1;
 
-        var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, null, cancellationToken)
+        var page = await ExecutePageAsync(options, SelectOrNull, null, cancellationToken)
             .ConfigureAwait(false);
 
         return page.Value.Count == 0 ? default : page.Value[0];
+    }
+
+    /// <summary>
+    /// Runs one page fetch, adding the derived-<c>$select</c> explanation to a <c>400</c>
+    /// when this query is using one.
+    /// </summary>
+    /// <remarks>
+    /// Only the first request of a stream needs this: a continuation replays the same
+    /// projection, so a projection the server rejects has already failed here. Continuations
+    /// are also sent as the server's verbatim <c>nextLink</c>, which the builder never sees.
+    /// </remarks>
+    private async Task<ODataResponse<TEntity>> ExecutePageAsync(
+        QueryOptions options,
+        IEnumerable<string>? select,
+        int? maxPageSize,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _executor
+                .FetchPageAsync<TEntity>(_path, FilterValue, options, select, maxPageSize, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (BusinessCentralValidationException ex) when (UsesDerivedSelect && select is not null)
+        {
+            throw DerivedSelectHint.Decorate<TEntity>(ex, EntitySelect.For<TEntity>());
+        }
     }
 
     public async Task<long> CountAsync(CancellationToken cancellationToken = default)
@@ -226,8 +250,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
 
         // A count query returns no rows, so it needs no column list — skip the derived
         // $select rather than sending a pointless projection.
-        var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, options, select: null, maxPageSize: null, cancellationToken)
+        var page = await ExecutePageAsync(options, select: null, maxPageSize: null, cancellationToken)
             .ConfigureAwait(false);
 
         if (page.Count is { } count)
@@ -243,6 +266,12 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
     }
 
     private string FilterValue => _filter?.Value ?? string.Empty;
+
+    /// <summary>
+    /// Whether the projection this query sends came from <see cref="EntitySelect"/> rather
+    /// than from the caller — the condition under which a <c>400</c> is worth explaining.
+    /// </summary>
+    private bool UsesDerivedSelect => _select.Count == 0 && !_selectAll;
 
     /// <summary>
     /// Explicit <c>Select(...)</c> wins; <c>SelectAll()</c> suppresses; otherwise the

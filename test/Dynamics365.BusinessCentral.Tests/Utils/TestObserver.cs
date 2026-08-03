@@ -29,6 +29,14 @@ public sealed class TestObserver : IBusinessCentralObserver
     public void OnTokenServedFromCache(BusinessCentralTokenInfo info)
         => Events.Add("token-cached");
 
+    public readonly List<BusinessCentralUrlLengthInfo> UrlWarnings = [];
+
+    public void OnUrlLengthWarning(BusinessCentralUrlLengthInfo info)
+    {
+        Events.Add($"url-length:{info.Length}");
+        UrlWarnings.Add(info);
+    }
+
     public void OnDeserializationFailed(BusinessCentralErrorInfo info)
         => Events.Add("deserialization-failed");
 }

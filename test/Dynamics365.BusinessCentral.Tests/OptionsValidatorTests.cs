@@ -63,4 +63,69 @@ public class OptionsValidatorTests
 
         Assert.Contains(Failures(options), f => f.Contains(nameof(options.MaxPageSize)));
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Non_Positive_MaxUrlLength_Fails_Validation(int value)
+    {
+        var options = Valid();
+        options.MaxUrlLength = value;
+
+        Assert.Contains(Failures(options), f => f.Contains(nameof(options.MaxUrlLength)));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Non_Positive_UrlLengthWarningThreshold_Fails_Validation(int value)
+    {
+        var options = Valid();
+        options.UrlLengthWarningThreshold = value;
+
+        Assert.Contains(Failures(options), f => f.Contains(nameof(options.UrlLengthWarningThreshold)));
+    }
+
+    // A threshold above the limit can never be reached, silently costing the deployment the
+    // measurement window the two settings exist to create.
+    [Fact]
+    public void Warning_Threshold_Above_MaxUrlLength_Fails_Validation()
+    {
+        var options = Valid();
+        options.MaxUrlLength = 1000;
+        options.UrlLengthWarningThreshold = 2000;
+
+        Assert.Contains(Failures(options), f => f.Contains(nameof(options.UrlLengthWarningThreshold)));
+    }
+
+    [Fact]
+    public void Warning_Threshold_Equal_To_MaxUrlLength_Passes()
+    {
+        var options = Valid();
+        options.MaxUrlLength = 2000;
+        options.UrlLengthWarningThreshold = 2000;
+
+        Assert.DoesNotContain(Failures(options), f => f.Contains(nameof(options.UrlLengthWarningThreshold)));
+    }
+
+    [Fact]
+    public void Url_Length_Defaults_Pass_Validation()
+    {
+        var options = Valid();
+
+        Assert.Equal(4000, options.MaxUrlLength);
+        Assert.Equal(2000, options.UrlLengthWarningThreshold);
+        Assert.DoesNotContain(Failures(options), f => f.Contains("UrlLength"));
+    }
+
+    // Disabling one must not implicate the other.
+    [Fact]
+    public void Null_Url_Length_Settings_Pass_Validation()
+    {
+        var options = Valid();
+        options.MaxUrlLength = null;
+        options.UrlLengthWarningThreshold = null;
+
+        Assert.DoesNotContain(Failures(options), f => f.Contains("UrlLength"));
+    }
 }

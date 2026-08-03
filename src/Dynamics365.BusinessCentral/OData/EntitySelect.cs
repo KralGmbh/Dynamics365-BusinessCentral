@@ -27,10 +27,29 @@ namespace Dynamics365.BusinessCentral.OData;
 /// <para>
 /// Names resolve through <see cref="PropertyPath.ResolveName"/> — the same rules as
 /// filters, ordering and deserialization — and are sorted ordinally so the emitted URL is
-/// deterministic. Note that <c>$select</c> is case-<b>sensitive</b> on the server even
-/// though deserialization is not: a <c>[JsonPropertyName]</c> whose casing drifts from
-/// <c>$metadata</c> deserializes fine today but fails loudly here. That is this feature
-/// surfacing latent drift, not creating it.
+/// deterministic.
+/// </para>
+/// <para>
+/// <b>Two ways this can fail a query that previously succeeded.</b> The inclusion rules
+/// above are the type's view of itself; nothing here can consult the tenant, so a name that
+/// is not a real column on the entity set is only discovered by the server rejecting it:
+/// </para>
+/// <list type="bullet">
+/// <item><b>Casing drift</b> — <c>$select</c> is case-<b>sensitive</b> on the server even
+/// though deserialization is not, so a <c>[JsonPropertyName]</c> that disagrees with
+/// <c>$metadata</c> only in case bound fine before and fails now. This is latent drift being
+/// surfaced, not created: the property was never actually receiving data.</item>
+/// <item><b>A property with no matching column at all</b> — this one <i>is</i> newly created
+/// breakage, and saying otherwise would be wrong. Such a property used to bind as its default
+/// and cost nothing; it now enters <c>$select</c> and fails the whole request with a
+/// <c>400</c> before any row is read. The shape to watch for is an inherited base class of
+/// system fields applied to entity sets that do not all expose them.</item>
+/// </list>
+/// <para>
+/// Either way the remedy is per-property <c>[JsonIgnore]</c> or a query-level
+/// <c>SelectAll()</c>, and <see cref="DerivedSelectHint"/> puts both into the exception
+/// message so the failure explains itself. Verifying wire names against <c>$metadata</c>
+/// once, when adopting this, is cheaper than meeting them one <c>400</c> at a time.
 /// </para>
 /// </remarks>
 internal static class EntitySelect

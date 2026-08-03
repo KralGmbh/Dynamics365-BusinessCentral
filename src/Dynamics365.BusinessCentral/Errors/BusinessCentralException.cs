@@ -33,6 +33,13 @@ public abstract class BusinessCentralException : Exception
     public string? CorrelationId { get; }
 
     /// <summary>
+    /// The message as supplied to the constructor, before <see cref="Exception.Message"/>
+    /// decorated it with method and status. Kept so the client can re-wrap an exception with
+    /// added context without the decoration accumulating.
+    /// </summary>
+    internal string ServerMessage { get; }
+
+    /// <summary>
     /// Delay requested by the server via <c>Retry-After</c>, when present.
     /// </summary>
     public TimeSpan? RetryAfter { get; internal set; }
@@ -86,6 +93,7 @@ public abstract class BusinessCentralException : Exception
         Exception? inner = null)
         : base(BuildSummary(message, statusCode, method), inner)
     {
+        ServerMessage = message;
         StatusCode = statusCode;
         Method = method;
         RequestUrl = requestUrl;

@@ -44,6 +44,15 @@ public interface IBusinessCentralObserver
     /// </summary>
     void OnRequestRetrying(BusinessCentralRetryInfo retry) { }
 
+    /// <summary>
+    /// Raised when a built request URL crossed
+    /// <c>BusinessCentralOptions.UrlLengthWarningThreshold</c>, before the request is sent.
+    /// Fires whether or not the URL also exceeded the hard limit — check
+    /// <see cref="BusinessCentralUrlLengthInfo.ExceedsLimit"/>. Has a default no-op
+    /// implementation so existing observers keep compiling.
+    /// </summary>
+    void OnUrlLengthWarning(BusinessCentralUrlLengthInfo url) { }
+
     /// <summary>Raised when a response could not be deserialized into the requested type.</summary>
     void OnDeserializationFailed(BusinessCentralErrorInfo error);
 }

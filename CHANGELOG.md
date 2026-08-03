@@ -7,6 +7,58 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0-alpha.7] - 2026-08-03
+
+**Prerelease.** The URL-length guard (N4 from
+[PRE-STABLE-REVIEW-BASTION.md](PRE-STABLE-REVIEW-BASTION.md), sharpened by L2 in
+[LIVE-TENANT-FINDINGS-BASTION.md](LIVE-TENANT-FINDINGS-BASTION.md)), plus the correction of
+an alpha.6 claim about derived `$select` that was wrong in one specific case.
+
+### Added
+
+- **`BusinessCentralOptions.MaxUrlLength`** (default `4000`) and
+  **`UrlLengthWarningThreshold`** (default `2000`). A built URL past the threshold raises the
+  new `IBusinessCentralObserver.OnUrlLengthWarning` and is **still sent**; a URL past the
+  limit throws an `ArgumentException` before the request leaves the process, naming the
+  actual length, the limit and — when the filter is an `or`-chain — the clause count and
+  `Filter.In` as the likely cause. Either setting may be `null` to disable it.
+
+  The gap between the two is deliberate. A hard threshold alone would turn queries Business
+  Central currently accepts into client-side exceptions on upgrade; the warning band instead
+  lets a deployment measure the length distribution its real workload produces and size
+  chunking against evidence. This matters because `Filter.In` renders an `or`-chain (BC
+  rejects the OData `in` operator), which costs roughly four times per key what `in (...)`
+  would — so bulk lookups approach the limit far sooner than the value count suggests.
+
+  Server-issued `@odata.nextLink` continuations are never checked: the server produced them,
+  so its own limits already applied.
+
+- **`IBusinessCentralObserver.OnUrlLengthWarning`** with `BusinessCentralUrlLengthInfo`
+  (`Url`, `Length`, `Threshold`, `Limit`, `ExceedsLimit`, `OrClauseCount`). A default
+  interface method, so existing observers keep compiling.
+
+### Fixed
+
+- **A `400` caused by the derived `$select` now explains itself.** The projection is derived
+  silently, so the server's message names the rejected column but cannot say why it was
+  asked for — the caller never asked. The exception now states that the `$select` was derived
+  from the entity type, names the implicated property when the server's message identifies
+  one, and gives both remedies (`[JsonIgnore]` on the property, `SelectAll()` on the query).
+  Applies only to fluent queries actually using a derived projection; explicit `Select(...)`,
+  `SelectAll()`, `CountAsync` and the path-based API are untouched.
+
+### Documentation
+
+- **Corrected an alpha.6 claim.** The derived-`$select` documentation said the feature
+  surfaces latent drift rather than creating breakage. That is true for **casing** drift —
+  such a property was never receiving data — but false for a property that maps to **no
+  Business Central column at all**: that used to bind as its default and cost nothing, and
+  now fails the whole request with a `400` before deserialization is ever reached. MIGRATION
+  and both READMEs now name this as breakage, with the shape to watch for (a shared base
+  class of system fields inherited by entity sets that do not all expose them).
+- README: a *"URL length and bulk key lookups"* section covering both settings, the observer
+  callback and the `or`-chain arithmetic.
+
 ## [2.0.0-alpha.6] - 2026-07-30
 
 **Prerelease.** The consumer-ergonomics round (F1/F2 from

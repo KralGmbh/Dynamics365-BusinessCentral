@@ -63,7 +63,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         // applied in HttpRequestExtensions.AddJsonHeaders instead.
         _tokenProvider = tokenProvider ?? new BusinessCentralTokenProvider(http, options, _observer);
 
-        _urlBuilder = new BusinessCentralUrlBuilder(_options.ResolvedBaseUrl, _company);
+        _urlBuilder = CreateUrlBuilder(_options, _company, _observer);
     }
 
     /// <summary>Copy constructor used by <see cref="ForCompany"/>.</summary>
@@ -75,8 +75,18 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         _tokenProvider = source._tokenProvider;
         _company = company;
 
-        _urlBuilder = new BusinessCentralUrlBuilder(source._options.ResolvedBaseUrl, company);
+        _urlBuilder = CreateUrlBuilder(source._options, company, source._observer);
     }
+
+    private static BusinessCentralUrlBuilder CreateUrlBuilder(
+        BusinessCentralOptions options,
+        string company,
+        IBusinessCentralObserver observer) =>
+        new(options.ResolvedBaseUrl,
+            company,
+            options.MaxUrlLength,
+            options.UrlLengthWarningThreshold,
+            observer);
 
     /// <inheritdoc />
     public string Company => _company;

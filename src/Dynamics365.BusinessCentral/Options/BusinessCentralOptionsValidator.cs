@@ -42,6 +42,28 @@ internal sealed class BusinessCentralOptionsValidator : IValidateOptions<Busines
                 "and at most int.MaxValue milliseconds (~24.8 days, HttpClient's maximum) when set.");
         }
 
+        if (options.MaxUrlLength is < 1)
+            failures.Add($"{nameof(BusinessCentralOptions)}.{nameof(options.MaxUrlLength)} must be at least 1 when set.");
+
+        if (options.UrlLengthWarningThreshold is < 1)
+        {
+            failures.Add(
+                $"{nameof(BusinessCentralOptions)}.{nameof(options.UrlLengthWarningThreshold)} " +
+                "must be at least 1 when set.");
+        }
+
+        // A threshold above the limit would never be reached before the throw, silently
+        // costing the deployment the measurement window the two settings exist to create.
+        if (options.UrlLengthWarningThreshold is { } warn &&
+            options.MaxUrlLength is { } max &&
+            warn > max)
+        {
+            failures.Add(
+                $"{nameof(BusinessCentralOptions)}.{nameof(options.UrlLengthWarningThreshold)} ({warn}) " +
+                $"must not exceed {nameof(options.MaxUrlLength)} ({max}) — a warning above the limit " +
+                "can never be raised.");
+        }
+
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);

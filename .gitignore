@@ -363,4 +363,4 @@ MigrationBackup/
 FodyWeavers.xsd
 
 # Local smoke tests (never committed)
-Dynamics365.BusinessCentral.SmokeTest/
+Dynamics365.BusinessCentral.SmokeTest/.DS_Store

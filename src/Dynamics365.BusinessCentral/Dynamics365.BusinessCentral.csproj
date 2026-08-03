@@ -7,7 +7,7 @@
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>2.0.0-alpha.6</Version>
+        <Version>2.0.0-alpha.7</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
 
@@ -35,15 +35,22 @@
         <!-- Shown on the nuget.org package page. Kept short and pointed at CHANGELOG.md
              rather than duplicated, since nuget.org renders this as plain text. -->
         <PackageReleaseNotes>
-            PRERELEASE — 2.0.0-alpha.6 adds the consumer-ergonomics round before 2.0.0
-            stable.
+            PRERELEASE — 2.0.0-alpha.7 adds the URL-length guard and corrects an alpha.6
+            claim about the derived $select.
 
-            Query&lt;T&gt;().Where(f =&gt; ...) infers the entity type per operator; $select
-            is now derived from the entity's settable scalar properties by default
-            (SelectAll() opts out; explicit Select(...) still wins); and
-            BusinessCentralOptions.RequestTimeout configures the data client's per-attempt
-            timeout. The README documents how message-level retry policies should map this
-            package's exception types.
+            BusinessCentralOptions.MaxUrlLength (default 4000) refuses an over-long URL
+            before it is sent, instead of letting Business Central answer with a 400 or 404
+            that never mentions length; UrlLengthWarningThreshold (default 2000) reports
+            long URLs through the new IBusinessCentralObserver.OnUrlLengthWarning while
+            still sending them, so a deployment can measure before it tunes. Bulk key
+            lookups are the case that matters: Filter.In renders an or-chain, which costs
+            roughly four times per key what "in (...)" would.
+
+            Also: a 400 caused by the derived $select now explains where the projection came
+            from and how to opt out. IMPORTANT — a property mapping to no Business Central
+            column fails such a query outright, which alpha.6's documentation wrongly
+            described as merely surfacing existing drift. See MIGRATION.md before upgrading
+            from alpha.6.
 
             Breaking changes — see the migration guide before upgrading:
             https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/MIGRATION.md

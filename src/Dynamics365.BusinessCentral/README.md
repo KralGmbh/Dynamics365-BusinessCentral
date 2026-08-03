@@ -114,10 +114,19 @@ and renders identically.
 `$select=Sell_to_Customer_No,amount,no,status` — the settable scalar properties of
 `SalesOrder`, resolved exactly like deserialization. The entity class states the
 projection once; call sites stop restating it. An explicit `.Select(...)` narrows it,
-`.SelectAll()` requests every column. Two things to know: navigation properties and
-get-only computed properties are excluded automatically, and `$select` is
-**case-sensitive** on the server even though deserialization is not — a `[JsonPropertyName]`
-whose casing drifts from `$metadata` fails loudly here instead of silently deserializing.
+`.SelectAll()` requests every column. Navigation properties and get-only computed
+properties are excluded automatically.
+
+> **A property with no matching column now fails the query.** Nothing in the package can
+> consult your tenant's schema, so every derived name is discovered by the server. A
+> property that maps to no column on the entity set used to bind as its default and cost
+> nothing; it now enters `$select` and the whole request fails with a `400` before a row is
+> read. The same applies to casing, since `$select` is **case-sensitive** on the server
+> even though deserialization is not. Remedy either with `[JsonIgnore]` on the property or
+> `.SelectAll()` on the query — the exception message names both. Watch for a shared base
+> class of system fields inherited by entity sets that do not all expose them. Verifying
+> your wire names against `$metadata` once, when adopting this, is cheaper than meeting
+> them one `400` at a time.
 
 | Operation | Method |
 | --------- | ------ |
@@ -285,6 +294,38 @@ is safe.
 > empty string, and Business Central maps `eq null` onto "is blank". `Filter.IsNull` on a
 > text field therefore matches empty strings, and `Filter.IsNotNull` *excludes* them —
 > unlike the equivalent LINQ predicate. Verified against a live tenant.
+
+## URL length and bulk key lookups
+
+Because `Filter.In` renders an `or`-chain, a bulk key lookup grows the URL roughly **four
+times faster** than the `in (...)` form suggests: `(no eq 'EBH100') or ` costs about 40
+encoded characters per key where `'EBH100',` would cost 10. Past the server's limit
+Business Central answers with a `400` or `404` that never mentions length.
+
+The client measures and guards:
+
+```csharp
+services.AddBusinessCentral(o =>
+{
+    o.UrlLengthWarningThreshold = 2000;  // default — raises OnUrlLengthWarning
+    o.MaxUrlLength              = 4000;  // default — throws ArgumentException
+});
+```
+
+A URL between the two is **sent normally** and reported to your observer, so a deployment
+can discover the length distribution its real workload produces and size chunking against
+evidence. Past `MaxUrlLength` the client throws before the request leaves the process, with
+a message naming the actual length, the limit, and the `or`-chain count when one is
+present. Set either to `null` to disable it.
+
+Server-issued `@odata.nextLink` continuations are never checked — the server produced them,
+so its own limits already applied.
+
+```csharp
+public void OnUrlLengthWarning(BusinessCentralUrlLengthInfo url) =>
+    _logger.LogWarning("BC URL {Length} chars ({OrClauses} or-clauses), limit {Limit}",
+        url.Length, url.OrClauseCount, url.Limit);
+```
 
 ## Field names without the builder
 

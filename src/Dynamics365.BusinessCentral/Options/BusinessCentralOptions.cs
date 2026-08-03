@@ -80,6 +80,44 @@ public sealed class BusinessCentralOptions
     /// </remarks>
     public TimeSpan? RequestTimeout { get; set; }
 
+    /// <summary>
+    /// Longest request URL the client will build before refusing to send it, in characters.
+    /// Defaults to <c>4000</c>; set to <see langword="null"/> to disable the check entirely.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing about a URL that is merely long is invalid — this guards the point past which
+    /// Business Central (or the IIS/gateway in front of it, whose own defaults are a 4,096-byte
+    /// URL and a 2,048-byte query string) answers with an opaque <c>400</c> or <c>404</c> that
+    /// never mentions length. The client turns that into an <see cref="ArgumentException"/>
+    /// naming the actual length, the limit and the likely cause, thrown before the request
+    /// leaves the process.
+    /// </para>
+    /// <para>
+    /// The usual cause is a bulk key lookup: <c>Filter.In</c> renders a same-field <c>or</c>-chain
+    /// because Business Central rejects the OData <c>in</c> operator, and <c>(no eq 'EBH100') or </c>
+    /// costs roughly four times what <c>'EBH100',</c> would once percent-encoded. Chunk the values.
+    /// </para>
+    /// <para>
+    /// Server-issued <c>@odata.nextLink</c> continuations are never checked — the server
+    /// produced them, so its own limits already apply.
+    /// </para>
+    /// </remarks>
+    public int? MaxUrlLength { get; set; } = 4000;
+
+    /// <summary>
+    /// URL length, in characters, at which <c>IBusinessCentralObserver.OnUrlLengthWarning</c>
+    /// is raised. Defaults to <c>2000</c>; set to <see langword="null"/> to disable the
+    /// warning. Must not exceed <see cref="MaxUrlLength"/>.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately well below <see cref="MaxUrlLength"/>: the gap is the measurement window.
+    /// A URL in it is sent normally and observed, so a deployment can discover the length
+    /// distribution its real workload produces — and size chunking against evidence — without
+    /// a single working query being turned into an exception.
+    /// </remarks>
+    public int? UrlLengthWarningThreshold { get; set; } = 2000;
+
     /// <summary><see cref="BaseUrl"/> with all placeholders substituted.</summary>
     internal string ResolvedBaseUrl => ResolvePlaceholders(BaseUrl);
 

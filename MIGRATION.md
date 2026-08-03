@@ -150,14 +150,56 @@ with `WithPageSize(500)` to keep the old behaviour — see §3.
 
 A `Query<T>()` call with no explicit `Select(...)` used to request **every column**; it now
 sends a `$select` derived from `T`'s settable scalar properties — the columns the type can
-actually hold. This can only narrow the data requested, so anything that deserialized
-before still deserializes. `.SelectAll()` restores the full row for deliberately partial
-entity types. The path-based `QueryAsync(select:)` is unchanged.
+actually hold. `.SelectAll()` restores the full row for deliberately partial entity types.
+The path-based `QueryAsync(select:)` is unchanged.
 
-**One migration caveat:** `$select` is case-sensitive on the server while deserialization
-is not. A `[JsonPropertyName]` value whose casing drifts from `$metadata` worked silently
-before and now fails with a loud `400` naming the field — verify your wire names against
-`$metadata` once when adopting the fluent builder.
+Narrowing the *response* is safe: anything that deserialized before still deserializes.
+Narrowing the *request* is not, and earlier wording here obscured that by talking only
+about deserialization — **the request can now fail before deserialization is reached.**
+Nothing in the package can consult your tenant's schema, so every derived name is validated
+by the server, and a name it does not recognise fails the whole query with a `400`.
+
+**Two ways an upgrade can break, and they are not equally your fault:**
+
+| Cause | Was it broken before? | What you see |
+| ----- | --------------------- | ------------ |
+| `[JsonPropertyName]` casing drifts from `$metadata` | Yes — the property silently never bound | `400` naming the field |
+| A property maps to **no Business Central column at all** | No — it bound as its default and cost nothing | `400` naming the field |
+
+The second row is **breakage this release creates**, not latent drift it surfaces. Say a
+base class contributes `SystemCreatedAt`/`SystemModifiedAt` to a dozen entities and only
+some of the published pages expose those columns: nothing in the model says so, and today
+those queries work. After upgrading they `400`. An inherited base class of system fields is
+the exact shape to check.
+
+**Do this once, before you rely on it:** issue one authenticated `GET` per entity set
+against `$metadata` and compare the column names offline against your `[JsonPropertyName]`
+values. It closes both rows above for every type at once, with no production risk, and it
+is much cheaper than meeting them one `400` at a time.
+
+**Remedies**, both already present: `[JsonIgnore]` on a property drops it from the
+projection permanently; `.SelectAll()` on a query sends no `$select` at all. Since
+`2.0.0-alpha.7` the exception itself says the projection was derived, names the implicated
+property, and points at both — you should not have to reason this out from a bare server
+message.
+
+### A long `$filter` is now refused client-side instead of failing opaquely
+
+New in `2.0.0-alpha.7`. `BusinessCentralOptions.MaxUrlLength` defaults to `4000`
+characters; a request that builds a longer URL throws an `ArgumentException` before it is
+sent, rather than drawing an opaque `400`/`404` from Business Central that never mentions
+length. `UrlLengthWarningThreshold` (default `2000`) raises the new
+`IBusinessCentralObserver.OnUrlLengthWarning` while still sending the request.
+
+This only bites bulk key lookups, and mainly through `Filter.In`: it renders an `or`-chain
+because Business Central rejects the OData `in` operator, and each encoded
+`(no eq 'EBH100') or ` runs about four times the width of the `'EBH100',` it replaces. If
+you chunk `In` values, this is where you find out your chunk size was tuned for the wrong
+arithmetic.
+
+If you have a working query between `4000` and whatever your deployment actually accepts,
+raise `MaxUrlLength` or set it to `null`. Server-issued `@odata.nextLink` continuations are
+never checked.
 
 ### Message-level retry policies must re-key their exceptions
 
@@ -325,4 +367,11 @@ There is no deprecation on the path-based API; migrate at your own pace, or not 
 - [ ] Replace `WithTop` used as a page size with `WithPageSize`
 - [ ] Check `DateTime` filter values for `Kind=Unspecified` semantics (now read as UTC)
 - [ ] Replace `dynamic` writes with the two-generic overloads
+- [ ] **Probe `$metadata` once per entity set** and diff the column names against your
+      `[JsonPropertyName]` values before relying on the derived `$select` — a property with
+      no matching column now fails the whole query
+- [ ] Check inherited base classes of system fields against the entity sets that inherit
+      them; not every published page exposes them
+- [ ] Re-check chunk sizes on bulk key lookups against `MaxUrlLength` (an `or`-chain costs
+      ~4× per key what `in (...)` would)
 - [ ] Optionally simplify configuration and drop hand-built `BaseUrl`
