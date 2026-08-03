@@ -14,6 +14,30 @@
 
 Upgrading from 1.x? See [MIGRATION.md](MIGRATION.md). Full history in [CHANGELOG.md](CHANGELOG.md).
 
+# 🎯 Scope
+
+Worth knowing before you adopt, because it is not obvious from the API surface.
+
+**Targets the OData v4 published-pages endpoint on Business Central SaaS** —
+`…/ODataV4/Company('NAME')/entitySet`, the surface you get by publishing a page as a web
+service. URLs are built around the `Company('NAME')` segment.
+
+**Not supported yet:**
+
+| | Status |
+| --- | --- |
+| `/api/v2.0` standard REST API | Not supported — uses a different URL shape (`companies({guid})/…`) |
+| Business Central on-premises | Untested. The OData stack differs and authentication is not client credentials |
+| Custom API pages (`/api/publisher/group/v1.0`) | Untested — same URL-shape question as `/api/v2.0` |
+
+`/api/v2.0` support is [tracked for 2.1 in #54](https://github.com/KralGmbh/Dynamics365-BusinessCentral/issues/54).
+
+**On behaviour measured against real tenants.** Several defaults encode observations from
+live Business Central deployments — that `Filter.In` must render an `or`-chain, that
+`$select` is case-insensitive, how paging responds. Tenants vary, and these were not
+measured everywhere, so anything derived from one deployment is overridable at registration
+rather than baked in. Where a default rests on a measurement, its XML documentation says so.
+
 # 📦 Installation
 
 ```bash

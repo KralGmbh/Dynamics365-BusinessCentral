@@ -81,6 +81,28 @@ public sealed class BusinessCentralOptions
     public TimeSpan? RequestTimeout { get; set; }
 
     /// <summary>
+    /// Whether a fluent query with no explicit projection derives its <c>$select</c> from the
+    /// entity type. Defaults to <see langword="true"/>. Set to <see langword="false"/> to
+    /// restore pre-2.0 behaviour — no <c>$select</c>, every column returned — for every query
+    /// at once.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The registration-level counterpart to the per-query <c>SelectAll()</c>. It exists so a
+    /// consumer whose entity classes are broad shared types, rather than per-use projections,
+    /// can opt out in one line instead of at every call site.
+    /// </para>
+    /// <para>
+    /// The default is on because deriving the projection is the feature, and an unflipped flag
+    /// ships nothing. The risk it carries is narrow and loud — a property mapping to no
+    /// Business Central column fails the query with a <c>400</c> naming the field — and
+    /// <c>BusinessCentralMetadata.AssertProjectionsResolveAsync</c> in the Testing package
+    /// turns that into a build-time check. Explicit <c>Select(...)</c> is unaffected either way.
+    /// </para>
+    /// </remarks>
+    public bool DeriveSelect { get; set; } = true;
+
+    /// <summary>
     /// Longest request URL the client will build before refusing to send it, in characters.
     /// Defaults to <c>4000</c>; set to <see langword="null"/> to disable the check entirely.
     /// </summary>
@@ -94,9 +116,18 @@ public sealed class BusinessCentralOptions
     /// leaves the process.
     /// </para>
     /// <para>
+    /// <b>The default of 4,000 is an estimate, not a measurement.</b> Unlike the rest of this
+    /// package's defaults it was reasoned from those IIS limits rather than observed against a
+    /// tenant, because the real ceiling depends on the deployment and on whatever sits in front
+    /// of it. That is what <see cref="UrlLengthWarningThreshold"/> is for: measure your own
+    /// workload, then set this from evidence — or to <see langword="null"/> if your deployment
+    /// accepts more.
+    /// </para>
+    /// <para>
     /// The usual cause is a bulk key lookup: <c>Filter.In</c> renders a same-field <c>or</c>-chain
     /// because Business Central rejects the OData <c>in</c> operator, and <c>(no eq 'EBH100') or </c>
-    /// costs roughly four times what <c>'EBH100',</c> would once percent-encoded. Chunk the values.
+    /// costs about twice what <c>'EBH100',</c> would once percent-encoded (38 characters against 17).
+    /// Chunk the values.
     /// </para>
     /// <para>
     /// Server-issued <c>@odata.nextLink</c> continuations are never checked — the server

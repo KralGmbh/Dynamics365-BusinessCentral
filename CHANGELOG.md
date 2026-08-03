@@ -27,7 +27,7 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
   Central currently accepts into client-side exceptions on upgrade; the warning band instead
   lets a deployment measure the length distribution its real workload produces and size
   chunking against evidence. This matters because `Filter.In` renders an `or`-chain (BC
-  rejects the OData `in` operator), which costs roughly four times per key what `in (...)`
+  rejects the OData `in` operator), which costs about twice per key what `in (...)`
   would — so bulk lookups approach the limit far sooner than the value count suggests.
 
   Server-issued `@odata.nextLink` continuations are never checked: the server produced them,
@@ -66,6 +66,23 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
   types by reflection. It was internal; the Testing package depends only on the main package's
   public API, and the validator needs exactly the projection the fluent builder would send —
   reimplementing those rules is precisely the drift this feature exists to prevent.
+
+- **Escape hatches for behaviour inferred from a single deployment.** Most of 2.0's polish came
+  from one production consumer's feedback, which is why the package is as well-measured as it
+  is — but a measurement from one tenant must never be the only thing a consumer can express.
+  Every such default now has a registration-level override, and the defaults themselves are
+  unchanged:
+
+  - **`BusinessCentralOptions.DeriveSelect`** (default `true`) — the global counterpart to the
+    per-query `SelectAll()`. A consumer whose entity classes are broad shared types rather than
+    per-use projections can restore pre-2.0 behaviour in one line instead of at every call site.
+  - **`Filter.In(field, values, ODataInStyle.Native)`** emits `field in (…)` instead of the
+    `or`-chain. The chain remains the default because one live tenant answered
+    `BadRequest_MethodNotImplemented` to `in`; an endpoint serving `$schemaversion=2.1` was
+    paying about twice the encoded URL length per key for a workaround it does not need.
+  - **`MaxUrlLength`'s documentation now says the `4000` default is an estimate, not a
+    measurement** — reasoned from IIS limits rather than observed, unlike every other default
+    in the package. `UrlLengthWarningThreshold` exists to replace it with evidence.
 
 ### Fixed
 
@@ -110,6 +127,12 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
   callback and the `or`-chain arithmetic.
 
 - Testing package README: the projection validator, and what it does and does not prove.
+
+- **README gained a `Scope` section.** The package targets the OData v4 **published-pages**
+  endpoint on Business Central SaaS and builds URLs around `Company('NAME')`. The standard
+  `/api/v2.0` REST API uses a different shape (`companies({guid})/…`) and is not supported;
+  on-premises is untested. Stating this is worth more than it costs: a consumer who learns it
+  from the README is inconvenienced, one who learns it after adopting is gone.
 
 ## [2.0.0-alpha.6] - 2026-07-30
 

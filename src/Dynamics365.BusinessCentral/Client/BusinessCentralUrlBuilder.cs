@@ -211,13 +211,13 @@ internal sealed class BusinessCentralUrlBuilder
 
         // The dominant cause, and the one whose cost is least obvious: Filter.In renders a
         // same-field or-chain because BC rejects the OData 'in' operator, and each encoded
-        // "(field eq 'value') or " runs ~4x the width of the "'value'," it replaces.
+        // "(field eq 'value') or " encodes to 38 characters against 17 for "'value',".
         if (orClauses >= 2)
         {
             message
                 .Append(CultureInfo.InvariantCulture, $" The filter contains {orClauses:N0} 'or' clauses — Filter.In renders an ")
                 .Append("or-chain rather than 'in (...)', which Business Central rejects, so a bulk key ")
-                .Append("lookup approaches this limit roughly four times faster than the value count ")
+                .Append("lookup approaches this limit about twice as fast as the value count ")
                 .Append("suggests. Chunk the values across several requests.");
         }
 

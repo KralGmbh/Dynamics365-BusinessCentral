@@ -313,6 +313,8 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
 
     int? IBusinessCentralQueryExecutor.DefaultMaxPageSize => _options.MaxPageSize;
 
+    bool IBusinessCentralQueryExecutor.DeriveSelect => _options.DeriveSelect;
+
     async Task<ODataResponse<TEntity>> IBusinessCentralQueryExecutor.FetchPageAsync<TEntity>(
         string path,
         string filter,

@@ -6,7 +6,7 @@ namespace Dynamics365.BusinessCentral.Diagnostics;
 /// <remarks>
 /// Raised before the request is sent, so it fires whether or not Business Central would
 /// have accepted the URL. Its purpose is measurement: an OR-chained <c>Filter.In</c> grows
-/// roughly four times faster than the <c>in (...)</c> form it replaces, and the only way to
+/// about twice as fast as the <c>in (...)</c> form it replaces, and the only way to
 /// size chunking honestly is to observe real lengths in a real deployment. Aggregate
 /// <see cref="Length"/> across a workload to find the true headroom before raising or
 /// lowering <c>BusinessCentralOptions.MaxUrlLength</c>.

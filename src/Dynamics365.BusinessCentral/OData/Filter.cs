@@ -131,6 +131,50 @@ public static class Filter
     public static ODataFilter In<TEntity>(Expression<Func<TEntity, object?>> field, IEnumerable<object> values) =>
         In(PropertyPath.Resolve(field), values);
 
+    /// <summary>
+    /// Creates a membership filter using an explicitly chosen rendering.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The <c>or</c>-chain default comes from one live tenant answering
+    /// <c>BadRequest_MethodNotImplemented</c> to the OData <c>in</c> operator. That is the
+    /// safe assumption, not a universal one: a deployment running
+    /// <c>$schemaversion=2.1</c>, or a future endpoint that supports <c>in</c> outright, pays
+    /// about <b>twice</b> the encoded URL length per key for a workaround it does not need —
+    /// and reaches <c>BusinessCentralOptions.MaxUrlLength</c> twice as fast.
+    /// </para>
+    /// <para>
+    /// Pass <see cref="ODataInStyle.Native"/> to emit <c>field in (v1,v2,…)</c> instead.
+    /// Verify it against your own endpoint before relying on it — this package cannot know
+    /// which schema version yours serves. Empty and single-value collections behave as they
+    /// do for the default rendering.
+    /// </para>
+    /// </remarks>
+    /// <param name="field">Wire name of the field to match.</param>
+    /// <param name="values">Values to match against.</param>
+    /// <param name="style">How to render the membership test.</param>
+    public static ODataFilter In(string field, IEnumerable<object> values, ODataInStyle style)
+    {
+        var array = values?.ToArray() ?? [];
+
+        if (style != ODataInStyle.Native || array.Length == 0)
+            return In(field, array);
+
+        // A single value gains nothing from 'in' and 'eq' is accepted everywhere, so the
+        // collapse applies to both renderings.
+        if (array.Length == 1)
+            return Equals(field, array[0]);
+
+        return new ODataFilter($"{field} in ({string.Join(",", array.Select(Format))})");
+    }
+
+    /// <inheritdoc cref="In(string, IEnumerable{object}, ODataInStyle)"/>
+    public static ODataFilter In<TEntity>(
+        Expression<Func<TEntity, object?>> field,
+        IEnumerable<object> values,
+        ODataInStyle style) =>
+        In(PropertyPath.Resolve(field), values, style);
+
     /// <summary>Creates a filter of the form: field eq null</summary>
     /// <remarks>
     /// On Business Central text fields this means <b>"null or blank"</b>, not just null:

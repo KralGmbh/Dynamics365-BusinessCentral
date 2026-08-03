@@ -271,15 +271,16 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
     /// Whether the projection this query sends came from <see cref="EntitySelect"/> rather
     /// than from the caller — the condition under which a <c>400</c> is worth explaining.
     /// </summary>
-    private bool UsesDerivedSelect => _select.Count == 0 && !_selectAll;
+    private bool UsesDerivedSelect => _select.Count == 0 && !_selectAll && _executor.DeriveSelect;
 
     /// <summary>
-    /// Explicit <c>Select(...)</c> wins; <c>SelectAll()</c> suppresses; otherwise the
-    /// projection is derived from the entity type (<see cref="EntitySelect"/>).
+    /// Explicit <c>Select(...)</c> wins; <c>SelectAll()</c> suppresses, as does turning
+    /// derivation off at registration; otherwise the projection is derived from the entity
+    /// type (<see cref="EntitySelect"/>).
     /// </summary>
     private IEnumerable<string>? SelectOrNull =>
         _select.Count > 0 ? _select
-        : _selectAll ? null
+        : !UsesDerivedSelect ? null
         : EntitySelect.For<TEntity>() is { Count: > 0 } derived ? derived : null;
 
     private QueryOptions BuildOptions()

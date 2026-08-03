@@ -219,7 +219,8 @@ length. `UrlLengthWarningThreshold` (default `2000`) raises the new
 
 This only bites bulk key lookups, and mainly through `Filter.In`: it renders an `or`-chain
 because Business Central rejects the OData `in` operator, and each encoded
-`(no eq 'EBH100') or ` runs about four times the width of the `'EBH100',` it replaces. If
+`(no eq 'EBH100') or ` encodes to 38 characters against 17 for the `'EBH100',` it replaces
+— about twice the width per key. If
 you chunk `In` values, this is where you find out your chunk size was tuned for the wrong
 arithmetic.
 
