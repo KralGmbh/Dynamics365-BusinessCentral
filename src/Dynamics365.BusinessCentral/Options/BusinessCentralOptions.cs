@@ -226,6 +226,41 @@ public sealed class BusinessCentralOptions
     /// </remarks>
     public int? QueryStringLengthWarningThreshold { get; set; } = 6000;
 
+    /// <summary>
+    /// How <c>Filter.In</c> renders when the call site leaves it at
+    /// <see cref="OData.ODataInStyle.Auto"/>. Defaults to <see cref="OData.ODataInStyle.Auto"/>,
+    /// which follows <see cref="SchemaVersion"/>.
+    /// </summary>
+    /// <remarks>
+    /// Set <see cref="OData.ODataInStyle.OrChain"/> to keep the portable rendering even on a
+    /// 2.1 endpoint, or <see cref="OData.ODataInStyle.Native"/> to force <c>in</c> on a
+    /// deployment whose schema version this package cannot infer. Per-call styles always win
+    /// over this.
+    /// </remarks>
+    public OData.ODataInStyle InStyle { get; set; } = OData.ODataInStyle.Auto;
+
+    /// <summary>
+    /// Whether membership filters left at <see cref="OData.ODataInStyle.Auto"/> should render
+    /// as the native <c>in</c> operator.
+    /// </summary>
+    /// <remarks>
+    /// Business Central gates <c>in</c> on schema version 2.1, so the honest signal that an
+    /// endpoint accepts it is the caller having asked for that version. Parsed rather than
+    /// compared as a string so <c>"2.10"</c> and future versions behave sensibly, and so a
+    /// value this package cannot parse falls back to the portable rendering rather than
+    /// guessing.
+    /// </remarks>
+    internal bool UseNativeIn => InStyle switch
+    {
+        OData.ODataInStyle.Native => true,
+        OData.ODataInStyle.OrChain => false,
+        _ => decimal.TryParse(
+                 SchemaVersion,
+                 System.Globalization.NumberStyles.Number,
+                 System.Globalization.CultureInfo.InvariantCulture,
+                 out var version) && version >= 2.1m
+    };
+
     /// <summary><see cref="BaseUrl"/> with all placeholders substituted.</summary>
     internal string ResolvedBaseUrl => ResolvePlaceholders(BaseUrl);
 

@@ -313,21 +313,29 @@ var filter = Filter.Equals<SalesOrder>(o => o.Status, "Open")
                    .And(Filter.GreaterThan<SalesOrder>(o => o.Amount, 100));
 ```
 
-`Filter.In` renders a **same-field `or`-chain** by default, not the OData `in` operator.
-Business Central supports `in`, but [only from schema version 2.1](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-filter-expressions-in-odata-uris);
-earlier versions answer `BadRequest_MethodNotImplemented` (verified against a live tenant).
-With an empty collection it yields a filter matching nothing, so passing an empty key set
-is safe.
-
-If your endpoint serves schema version 2.1, opt in — it is roughly **half** the encoded URL
-length per key. Both settings are needed; the operator alone will still be rejected:
+`Filter.In` picks its rendering from your configuration. Business Central supports the OData
+`in` operator, but [only from schema version 2.1](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-filter-expressions-in-odata-uris);
+below that it answers `501`. So tell the client which you have, once:
 
 ```csharp
 services.AddBusinessCentral(o => o.SchemaVersion = "2.1");
-
-var filter = Filter.In<Item>(i => i.No, keys, ODataInStyle.Native);
-// no in ('EBH100','EBT200')  →  ?$filter=...&$schemaversion=2.1
 ```
+
+and every `Filter.In` switches to `no in ('A','B')` — **no call-site changes**. Without it,
+they render the portable same-field `or`-chain `(no eq 'A') or (no eq 'B')`. Both return
+identical rows where both work, verified against a live tenant; the `in` form is about half
+the encoded width, which roughly doubles the keys that fit in one request.
+
+The choice is made when the request URL is built, so composing with `.And(...)` keeps it —
+which matters, because a chunked key lookup is almost always combined with something else.
+Pin a rendering per call with `Filter.In(field, values, ODataInStyle.OrChain)` (or `.Native`),
+or globally with `o.InStyle`.
+
+> Reading `ODataFilter.Value` directly always gives you the `or`-chain: a bare filter value
+> has no endpoint to ask. What goes on the wire is what the configured client rendered.
+
+With an empty collection `Filter.In` yields a filter matching nothing, so passing an empty key
+set is safe; a single value collapses to `eq`.
 
 > **Business Central limitation:** `or` only works between filters on the *same* field.
 > Combining filters on different fields with `.Or(...)` — `field1 eq 1 or field2 eq 2` —
@@ -375,7 +383,8 @@ public void OnUrlLengthWarning(BusinessCentralUrlLengthInfo url) =>
 > **The cheapest fix is usually schema version 2.1.** For 25 eight-character keys the encoded
 > `$filter` is 942 characters as an `or`-chain against 438 natively — and `&$schemaversion=2.1`
 > costs 19, so it recovers essentially the whole difference and roughly doubles the keys that
-> fit in one request. See [Filters](#-filters).
+> fit in one request. Setting `o.SchemaVersion = "2.1"` applies it to every `Filter.In` with no
+> call-site changes. See [Filters](#-filters).
 
 ## Field names without the builder
 

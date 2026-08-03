@@ -35,6 +35,12 @@ internal interface IBusinessCentralQueryExecutor
     /// </summary>
     bool DeriveSelect => true;
 
+    /// <summary>
+    /// Whether membership filters left at <see cref="ODataInStyle.Auto"/> render as the native
+    /// <c>in</c> operator, resolved from the registration's schema version and style.
+    /// </summary>
+    bool UseNativeIn => false;
+
     /// <remarks>
     /// <c>maxPageSize</c>, when set, is sent as <c>Prefer: odata.maxpagesize</c>. Streaming
     /// reads pass the resolved preference; single-page reads pass <see langword="null"/> —

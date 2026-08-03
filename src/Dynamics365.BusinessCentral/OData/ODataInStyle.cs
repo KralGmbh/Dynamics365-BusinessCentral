@@ -7,28 +7,41 @@ namespace Dynamics365.BusinessCentral.OData;
 /// <remarks>
 /// Business Central supports the <c>in</c> operator, but only from schema version 2.1 —
 /// Microsoft's filter-expression reference states <i>"In a list of values … Note: This only
-/// works in <c>$schemaversion=2.1</c>"</i>, and a live tenant on an earlier version answered
-/// <c>BadRequest_MethodNotImplemented</c>. So the default cannot be <see cref="Native"/>, and
-/// the workaround cannot be the only option either.
+/// works in <c>$schemaversion=2.1</c>"</i>, and a live tenant confirms it: the same query
+/// answers <c>501</c> without the parameter and <c>200</c> with it, returning byte-identical
+/// rows to the <c>or</c>-chain. So neither rendering can be unconditionally right, which is
+/// what <see cref="Auto"/> is for.
 /// </remarks>
 public enum ODataInStyle
 {
     /// <summary>
-    /// <c>(field eq v1) or (field eq v2) …</c> — the default. Accepted on every Business
-    /// Central schema version, at about twice the encoded URL length per value.
-    /// </summary>
-    OrChain = 0,
-
-    /// <summary>
-    /// <c>field in (v1,v2,…)</c> — far shorter, and what Business Central natively supports
-    /// from schema version 2.1 onwards.
+    /// Let the client decide — the default. It emits <see cref="Native"/> when the configured
+    /// <c>BusinessCentralOptions.SchemaVersion</c> is 2.1 or later (or when
+    /// <c>BusinessCentralOptions.InStyle</c> forces a rendering), and <see cref="OrChain"/>
+    /// otherwise.
     /// </summary>
     /// <remarks>
-    /// <b>Requires <c>BusinessCentralOptions.SchemaVersion = "2.1"</c>.</b> The two are a pair:
-    /// without the schema version the server answers
-    /// <c>BadRequest_MethodNotImplemented</c>, so choosing this style alone only changes which
-    /// error you get. Verify against your own endpoint — availability depends on the deployment
-    /// and its version.
+    /// The decision happens when the request URL is built, not when the filter is constructed,
+    /// so composing an automatic membership filter with <c>.And(...)</c> keeps it automatic.
+    /// Reading <c>ODataFilter.Value</c> outside a client yields the portable <c>or</c>-chain,
+    /// because a bare value has no endpoint to ask.
     /// </remarks>
-    Native = 1
+    Auto = 0,
+
+    /// <summary>
+    /// <c>(field eq v1) or (field eq v2) …</c> — accepted on every Business Central schema
+    /// version, at about twice the encoded query-string length per value.
+    /// </summary>
+    OrChain = 1,
+
+    /// <summary>
+    /// <c>field in (v1,v2,…)</c> — what Business Central natively supports from schema version
+    /// 2.1 onwards, and roughly half the encoded width.
+    /// </summary>
+    /// <remarks>
+    /// Forcing this without <c>BusinessCentralOptions.SchemaVersion = "2.1"</c> produces a
+    /// request the server answers with <c>501</c>. Prefer <see cref="Auto"/> and set the schema
+    /// version, which makes the two move together.
+    /// </remarks>
+    Native = 2
 }

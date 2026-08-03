@@ -107,21 +107,29 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
     per-query `SelectAll()`. A consumer whose entity classes are broad shared types rather than
     per-use projections can restore pre-2.0 behaviour in one line instead of at every call site.
   - **`BusinessCentralOptions.SchemaVersion`** (default `null`) sends `$schemaversion=` on
-    queries, and **`Filter.In(field, values, ODataInStyle.Native)`** emits `field in (…)`
-    instead of the `or`-chain. They are a pair, and both are needed.
+    every request, and **`Filter.In` now follows it**: at schema version 2.1 or later it
+    renders the native `field in (…)`, otherwise the portable `or`-chain. One setting, no
+    call-site changes.
 
     Microsoft documents the `in` operator as working
     [only in `$schemaversion=2.1`](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-filter-expressions-in-odata-uris),
     and that is now confirmed live: the same query returns `501` without the parameter and
     `200` with it, with **byte-identical** response bodies to the `or`-chain control, across
     five entity sets spanning three kinds of published object. `$schemaversion=2.0` still
-    returns `501`, so it is specifically 2.1. The `or`-chain remains the default because it
-    works on every schema version. But an endpoint that *is* on
-    2.1 was previously stuck paying about twice the encoded URL length per key for a
-    workaround it does not need, with no way to opt out — and no way to request the schema
-    version even if there had been. Schema version 2.1 also enables nested function calls
-    such as `contains(tolower(field), 'x')`, which earlier versions answer with an error or
-    an undefined result.
+    returns `501`, so it is specifically 2.1. The `in` form is about half the encoded
+    query-string width, which roughly doubles the keys that fit in one request.
+
+    The rendering is resolved **when the request URL is built**, not when the filter is
+    constructed — which is what makes it useful, since a chunked key lookup is almost always
+    `.And(...)`-ed with something else and freezing the choice at construction would mean the
+    automatic form never applied where it mattered. `ODataFilter.Value` still yields the
+    `or`-chain: a bare value has no endpoint to ask.
+
+    `ODataInStyle.Auto` is the new default; `OrChain` and `Native` pin one rendering per call,
+    and `BusinessCentralOptions.InStyle` does the same globally. Forcing `Native` without the
+    schema version produces a request the server answers with `501`, which is the caller's
+    choice to make rather than one the package prevents.
+
   - **`BusinessCentralOptions.SchemaVersion` reaches every URL builder**, not only list
     queries. As first shipped it was emitted by one of six, so a consumer setting `"2.1"` read
     lists under one contract and did reads-by-key, writes, the company list, raw queries and

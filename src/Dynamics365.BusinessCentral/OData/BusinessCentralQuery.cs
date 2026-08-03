@@ -265,7 +265,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         return walked;
     }
 
-    private string FilterValue => _filter?.Value ?? string.Empty;
+    private string FilterValue => _filter?.Render(_executor.UseNativeIn) ?? string.Empty;
 
     /// <summary>
     /// Whether the projection this query sends came from <see cref="EntitySelect"/> rather

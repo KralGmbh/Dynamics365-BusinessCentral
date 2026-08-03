@@ -389,4 +389,159 @@ public class TenantVariabilityTests : TestBase
         [.. Enumerable.Range(0, count).Select(i => (object)$"EBH{i:D5}")];
 
     #endregion
+
+    #region Auto in-style resolution
+
+    private static async Task<string> UrlFor(
+        Action<Dynamics365.BusinessCentral.Options.BusinessCentralOptions>? configure,
+        Func<Dynamics365.BusinessCentral.Client.BusinessCentralClient, Task> run)
+    {
+        string? url = null;
+
+        var client = CreateClient(
+            WithToken(req =>
+            {
+                url ??= req.RequestUri!.AbsoluteUri;
+                return Json("""{"value":[]}""");
+            }),
+            configure: configure);
+
+        await run(client);
+
+        return Uri.UnescapeDataString(url!);
+    }
+
+    [Fact]
+    public async Task Auto_Renders_The_Or_Chain_Without_A_Schema_Version()
+    {
+        var url = await UrlFor(null, c =>
+            c.Query<SalesOrder>().Where(f => f.In(x => x.No, ["A", "B"])).ToListAsync());
+
+        Assert.Contains("(no eq 'A') or (no eq 'B')", url, StringComparison.Ordinal);
+    }
+
+    /// <summary>The point of the change: setting 2.1 is enough, no call site edits.</summary>
+    [Fact]
+    public async Task Auto_Renders_Native_In_At_Schema_Version_2_1()
+    {
+        var url = await UrlFor(o => o.SchemaVersion = "2.1", c =>
+            c.Query<SalesOrder>().Where(f => f.In(x => x.No, ["A", "B"])).ToListAsync());
+
+        Assert.Contains("no in ('A','B')", url, StringComparison.Ordinal);
+        Assert.DoesNotContain(" or ", url, StringComparison.Ordinal);
+    }
+
+    /// <summary>2.0 was measured to still reject `in`, so it must not flip.</summary>
+    [Fact]
+    public async Task Auto_Stays_Or_Chained_At_Schema_Version_2_0()
+    {
+        var url = await UrlFor(o => o.SchemaVersion = "2.0", c =>
+            c.Query<SalesOrder>().Where(f => f.In(x => x.No, ["A", "B"])).ToListAsync());
+
+        Assert.Contains("(no eq 'A') or (no eq 'B')", url, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("2.1", true)]
+    [InlineData("2.10", true)]
+    [InlineData("3.0", true)]
+    [InlineData("2.0", false)]
+    [InlineData("1.0", false)]
+    [InlineData("banana", false)]
+    public async Task Schema_Version_Parsing_Decides_The_Rendering(string version, bool native)
+    {
+        var url = await UrlFor(o => o.SchemaVersion = version, c =>
+            c.Query<SalesOrder>().Where(f => f.In(x => x.No, ["A", "B"])).ToListAsync());
+
+        Assert.Equal(native, url.Contains("no in (", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The composition case, and the one that decides whether this feature is worth anything:
+    /// a chunked key lookup is almost always <c>.And(...)</c>-ed with something else, so
+    /// freezing the rendering on composition would mean the automatic form never applies where
+    /// it actually matters.
+    /// </summary>
+    [Fact]
+    public async Task Composition_Preserves_The_Deferred_Rendering()
+    {
+        var url = await UrlFor(o => o.SchemaVersion = "2.1", c =>
+            c.Query<SalesOrder>()
+                .Where(f => f.In(x => x.No, ["A", "B"]).And(f.Equals(x => x.Status, "Open")))
+                .ToListAsync());
+
+        Assert.Contains("no in ('A','B')", url, StringComparison.Ordinal);
+        Assert.Contains("status eq 'Open'", url, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Negation_Preserves_The_Deferred_Rendering()
+    {
+        var url = await UrlFor(o => o.SchemaVersion = "2.1", c =>
+            c.Query<SalesOrder>().Where(Filter.In<SalesOrder>(x => x.No, ["A", "B"]).Not()).ToListAsync());
+
+        Assert.Contains("not (no in ('A','B'))", url, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Explicit_OrChain_Is_Not_Flipped_By_Schema_Version()
+    {
+        var url = await UrlFor(o => o.SchemaVersion = "2.1", c =>
+            c.Query<SalesOrder>()
+                .Where(Filter.In<SalesOrder>(x => x.No, ["A", "B"], ODataInStyle.OrChain))
+                .ToListAsync());
+
+        Assert.Contains("(no eq 'A') or (no eq 'B')", url, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Explicit_Native_Survives_Without_A_Schema_Version()
+    {
+        var url = await UrlFor(null, c =>
+            c.Query<SalesOrder>()
+                .Where(Filter.In<SalesOrder>(x => x.No, ["A", "B"], ODataInStyle.Native))
+                .ToListAsync());
+
+        Assert.Contains("no in ('A','B')", url, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InStyle_Option_Overrides_The_Schema_Version()
+    {
+        var orChained = await UrlFor(
+            o => { o.SchemaVersion = "2.1"; o.InStyle = ODataInStyle.OrChain; },
+            c => c.Query<SalesOrder>().Where(f => f.In(x => x.No, ["A", "B"])).ToListAsync());
+
+        Assert.Contains("(no eq 'A') or (no eq 'B')", orChained, StringComparison.Ordinal);
+
+        var forced = await UrlFor(
+            o => o.InStyle = ODataInStyle.Native,
+            c => c.Query<SalesOrder>().Where(f => f.In(x => x.No, ["A", "B"])).ToListAsync());
+
+        Assert.Contains("no in ('A','B')", forced, StringComparison.Ordinal);
+    }
+
+    /// <summary>The path-based API resolves it too, not just the fluent builder.</summary>
+    [Fact]
+    public async Task Path_Based_Query_Also_Resolves_Auto()
+    {
+        var url = await UrlFor(o => o.SchemaVersion = "2.1", c =>
+            c.QueryAsync<SalesOrder>("salesOrders", Filter.In<SalesOrder>(x => x.No, ["A", "B"])));
+
+        Assert.Contains("no in ('A','B')", url, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A bare value has no endpoint to ask, so it stays portable. Documented, and worth pinning
+    /// because it is the one place the wire form and <c>Value</c> legitimately differ.
+    /// </summary>
+    [Fact]
+    public void Value_Stays_The_Portable_Or_Chain()
+    {
+        Assert.Equal(
+            "(no eq 'A') or (no eq 'B')",
+            Filter.In("no", ["A", "B"]).Value);
+    }
+
+    #endregion
 }

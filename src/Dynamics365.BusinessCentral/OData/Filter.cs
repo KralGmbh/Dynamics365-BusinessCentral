@@ -90,65 +90,54 @@ public static class Filter
         EndsWith(PropertyPath.Resolve(field), value);
 
     /// <summary>
-    /// Creates a filter matching any of <paramref name="values"/>, rendered as a chain of
-    /// same-field equalities: <c>(field eq v1) or (field eq v2) or ...</c>.
+    /// Creates a filter matching any of <paramref name="values"/>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Deliberately <b>not</b> the OData <c>in</c> operator: Business Central only accepts
-    /// <c>field in (...)</c> with <c>$schemaversion=2.1</c> and answers
-    /// <c>BadRequest_MethodNotImplemented</c> without it — verified against a live tenant.
-    /// A same-field <c>or</c>-chain is explicitly supported on every schema version and is
-    /// semantically identical. The URL grows with the value count; chunk large key sets.
+    /// Rendering is decided by the client, not here (<see cref="ODataInStyle.Auto"/>): a
+    /// configured <c>BusinessCentralOptions.SchemaVersion</c> of 2.1 or later emits
+    /// <c>field in (v1,v2,…)</c>, and anything else emits the portable same-field
+    /// <c>or</c>-chain <c>(field eq v1) or (field eq v2) …</c>. Business Central rejects
+    /// <c>in</c> below schema version 2.1 with <c>BadRequest_MethodNotImplemented</c>, and the
+    /// two forms return identical rows where both work — verified against a live tenant.
+    /// </para>
+    /// <para>
+    /// The decision is deferred until the request URL is built, so composing with
+    /// <c>.And(...)</c> keeps it. Reading <see cref="ODataFilter.Value"/> directly yields the
+    /// <c>or</c>-chain, since a bare value has no endpoint to ask. Pass an explicit
+    /// <see cref="ODataInStyle"/> to pin one rendering.
     /// </para>
     /// <para>
     /// An empty <paramref name="values"/> produces a filter that matches nothing
     /// (<c>false</c>), so <c>Filter.In(field, ids)</c> is safe when <c>ids</c> turns out
-    /// to be empty.
+    /// to be empty. A single value collapses to a plain <c>eq</c>, which every version accepts
+    /// and which is shorter than either list form.
     /// </para>
     /// </remarks>
-    public static ODataFilter In(string field, params object[] values)
-    {
-        if (values is null || values.Length == 0)
-            return None;
-
-        if (values.Length == 1)
-            return Equals(field, values[0]);
-
-        return new ODataFilter(
-            string.Join(" or ", values.Select(v => $"({field} eq {Format(v)})")));
-    }
+    public static ODataFilter In(string field, params object[] values) =>
+        In(field, values, ODataInStyle.Auto);
 
     /// <inheritdoc cref="In(string, object[])"/>
     public static ODataFilter In(string field, IEnumerable<object> values) =>
-        In(field, values?.ToArray() ?? []);
+        In(field, values, ODataInStyle.Auto);
 
     /// <inheritdoc cref="In(string, object[])"/>
     public static ODataFilter In<TEntity>(Expression<Func<TEntity, object?>> field, params object[] values) =>
-        In(PropertyPath.Resolve(field), values);
+        In(PropertyPath.Resolve(field), values, ODataInStyle.Auto);
 
     /// <inheritdoc cref="In(string, object[])"/>
     public static ODataFilter In<TEntity>(Expression<Func<TEntity, object?>> field, IEnumerable<object> values) =>
-        In(PropertyPath.Resolve(field), values);
+        In(PropertyPath.Resolve(field), values, ODataInStyle.Auto);
 
     /// <summary>
-    /// Creates a membership filter using an explicitly chosen rendering.
+    /// Creates a membership filter, optionally pinning how it is rendered.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// The <c>or</c>-chain is the default because Business Central's <c>in</c> operator is
-    /// gated on schema version: Microsoft documents it as working <i>only</i> in
-    /// <c>$schemaversion=2.1</c>, and a live tenant on an earlier version answered
-    /// <c>BadRequest_MethodNotImplemented</c>. A deployment that <i>is</i> on 2.1 pays about
-    /// <b>twice</b> the encoded URL length per key for a workaround it does not need — and
-    /// reaches <c>BusinessCentralOptions.MaxQueryStringLength</c> twice as fast.
-    /// </para>
-    /// <para>
-    /// Pass <see cref="ODataInStyle.Native"/> to emit <c>field in (v1,v2,…)</c> instead. This
-    /// requires <c>BusinessCentralOptions.SchemaVersion = "2.1"</c> — the two are a pair, and
-    /// a native <c>in</c> without it is a request the server will reject. Empty and
-    /// single-value collections behave as they do for the default rendering.
-    /// </para>
+    /// <see cref="ODataInStyle.Auto"/> — the default for the shorter overloads — lets the
+    /// client choose from its configured schema version. Pin a rendering only when you know
+    /// better than the configuration does; forcing <see cref="ODataInStyle.Native"/> without
+    /// <c>SchemaVersion = "2.1"</c> produces a request Business Central answers with
+    /// <c>501</c>.
     /// </remarks>
     /// <param name="field">Wire name of the field to match.</param>
     /// <param name="values">Values to match against.</param>
@@ -157,15 +146,25 @@ public static class Filter
     {
         var array = values?.ToArray() ?? [];
 
-        if (style != ODataInStyle.Native || array.Length == 0)
-            return In(field, array);
+        if (array.Length == 0)
+            return None;
 
-        // A single value gains nothing from 'in' and 'eq' is accepted everywhere, so the
-        // collapse applies to both renderings.
+        // One value gains nothing from either list form, and 'eq' is accepted everywhere.
         if (array.Length == 1)
             return Equals(field, array[0]);
 
-        return new ODataFilter($"{field} in ({string.Join(",", array.Select(Format))})");
+        var orChain = string.Join(" or ", array.Select(v => $"({field} eq {Format(v)})"));
+        var native = $"{field} in ({string.Join(",", array.Select(Format))})";
+
+        return style switch
+        {
+            ODataInStyle.Native => new ODataFilter(native),
+            ODataInStyle.OrChain => new ODataFilter(orChain),
+
+            // Auto: keep the portable rendering as Value, and let a configured client
+            // substitute the shorter one when it knows the endpoint accepts it.
+            _ => new ODataFilter(orChain, useNative => useNative ? native : orChain)
+        };
     }
 
     /// <inheritdoc cref="In(string, IEnumerable{object}, ODataInStyle)"/>
