@@ -83,7 +83,7 @@ All entity URLs go through `BusinessCentralUrlBuilder`, which injects the compan
 - `EncodeKey` preserves OData key syntax (`'`, `=`, `,`, `(`, `)`) so alternate keys like `No='1000'` survive; `Uri.EscapeDataString` would mangle them into `No%3D%271000%27`.
 - `BuildRawUrl` (used only by `QueryRawAsync`) passes everything after the first `?` through verbatim, so caller-supplied query strings like `salesOrders?$top=5` work.
 
-Note the quirk in `BuildQueryUrl`: a filter string of `"true"` is treated as "no filter" and omitted.
+Note the quirk in `BuildQueryUrl`: a filter string of `"true"` is treated as "no filter" and omitted. It also appends `$schemaversion=` when `BusinessCentralOptions.SchemaVersion` is set — required for `ODataInStyle.Native`, since Microsoft documents `in` as working only in `$schemaversion=2.1`. Those two settings are a pair; shipping either alone is a dead end (an earlier build shipped `Native` with no way to send the schema version, which could never have worked).
 
 Every URL the builder assembles passes through `Guard`, which reports past `UrlLengthWarningThreshold` (observer `OnUrlLengthWarning`) and throws past `MaxUrlLength`. The two-level design is the point: a bare limit would turn queries BC currently accepts into client-side exceptions on upgrade, so the band between them is a measurement window. The builder is also the right seam because a server-issued `@odata.nextLink` never passes through it — `FetchNextPageAsync` sends the absolute URL verbatim — so continuations are exempt for free. Public entry points call `Guard` exactly once each; the internal `EntityUrl` helpers exist so composed builders don't double-report.
 

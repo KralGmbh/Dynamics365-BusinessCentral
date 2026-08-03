@@ -52,7 +52,7 @@ OData you intend. It cannot prove **Business Central's half** — that the serve
 A real example from a production consumer: a test asserting
 `$filter=no in ('EBH100','EBT200')` passed, while the live tenant rejected that exact
 filter with `BadRequest_MethodNotImplemented`, because BC does not support the `in`
-operator without `$schemaversion=2.1`. The fake answers whatever it is scripted to answer.
+operator below schema version 2.1. The fake answers whatever it is scripted to answer.
 
 Treat wire-level compatibility as a separate concern: verify operators against a live
 tenant once, then let these tests guard against regressions in what you *generate*.

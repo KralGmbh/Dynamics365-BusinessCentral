@@ -13,18 +13,22 @@ internal sealed class BusinessCentralUrlBuilder
     private readonly int? _warnLength;
     private readonly IBusinessCentralObserver _observer;
 
+    private readonly string? _schemaVersion;
+
     public BusinessCentralUrlBuilder(
         string baseUrl,
         string company,
         int? maxLength = null,
         int? warnLength = null,
-        IBusinessCentralObserver? observer = null)
+        IBusinessCentralObserver? observer = null,
+        string? schemaVersion = null)
     {
         _baseUrl = baseUrl.TrimEnd('/');
         _company = company;
         _maxLength = maxLength;
         _warnLength = warnLength;
         _observer = observer ?? new NullBusinessCentralObserver();
+        _schemaVersion = string.IsNullOrWhiteSpace(schemaVersion) ? null : schemaVersion.Trim();
     }
 
     public string BuildEntityUrl(string path)
@@ -154,6 +158,14 @@ internal sealed class BusinessCentralUrlBuilder
             query.Add("$count=true");
         }
 
+        // Schema version — gates the filter features Business Central documents as 2.1-only,
+        // the 'in' operator among them. Last so the interesting parts of a URL stay readable
+        // at the front when it turns up in a log.
+        if (_schemaVersion is not null)
+        {
+            query.Add("$schemaversion=" + Uri.EscapeDataString(_schemaVersion));
+        }
+
         if (query.Count > 0)
         {
             url += "?" + string.Join("&", query);
@@ -210,7 +222,8 @@ internal sealed class BusinessCentralUrlBuilder
         var orClauses = CountOrClauses(url);
 
         // The dominant cause, and the one whose cost is least obvious: Filter.In renders a
-        // same-field or-chain because BC rejects the OData 'in' operator, and each encoded
+        // same-field or-chain because BC gates the OData 'in' operator on schema version 2.1,
+        // and each encoded
         // "(field eq 'value') or " encodes to 38 characters against 17 for "'value',".
         if (orClauses >= 2)
         {

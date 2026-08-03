@@ -81,6 +81,37 @@ public sealed class BusinessCentralOptions
     public TimeSpan? RequestTimeout { get; set; }
 
     /// <summary>
+    /// OData schema version to request, sent as <c>$schemaversion=</c> on queries. Defaults to
+    /// <see langword="null"/> — no schema version is sent, and Business Central serves its
+    /// default.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Set this to <c>"2.1"</c> to enable the filter features Microsoft documents as requiring
+    /// it. Two matter here:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>the <c>in</c> operator — <i>"In a list of values … Note: This only works in
+    /// <c>$schemaversion=2.1</c>"</i>. Without it Business Central answers
+    /// <c>BadRequest_MethodNotImplemented</c>, which is why <see cref="OData.ODataInStyle"/>
+    /// defaults to an <c>or</c>-chain;</item>
+    /// <item>nested function calls such as <c>contains(tolower(field), 'x')</c>, which on
+    /// earlier schema versions either error or return undefined results.</item>
+    /// </list>
+    /// <para>
+    /// <b>Required for <see cref="OData.ODataInStyle.Native"/> to work.</b> The two settings are
+    /// a pair: asking for a native <c>in</c> without this is a request Business Central will
+    /// reject.
+    /// </para>
+    /// <para>
+    /// See <see href="https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-filter-expressions-in-odata-uris">
+    /// Using Filter Expressions in OData URIs</see>. Verify against your own endpoint before
+    /// relying on it — availability depends on the deployment and its version.
+    /// </para>
+    /// </remarks>
+    public string? SchemaVersion { get; set; }
+
+    /// <summary>
     /// Whether a fluent query with no explicit projection derives its <c>$select</c> from the
     /// entity type. Defaults to <see langword="true"/>. Set to <see langword="false"/> to
     /// restore pre-2.0 behaviour — no <c>$select</c>, every column returned — for every query

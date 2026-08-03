@@ -166,4 +166,72 @@ public class TenantVariabilityTests : TestBase
     }
 
     #endregion
+
+    #region $schemaversion
+
+    /// <summary>
+    /// Native <c>in</c> is useless without this. Microsoft documents the operator as working
+    /// only in <c>$schemaversion=2.1</c>, so shipping <see cref="ODataInStyle.Native"/> without
+    /// a way to request that version would be an escape hatch onto a wall.
+    /// </summary>
+    [Fact]
+    public async Task SchemaVersion_Is_Sent_When_Configured()
+    {
+        string? url = null;
+
+        var client = CreateClient(
+            WithToken(req =>
+            {
+                url = req.RequestUri!.AbsoluteUri;
+                return Json("""{"value":[]}""");
+            }),
+            configure: o => o.SchemaVersion = "2.1");
+
+        await client.Query<SalesOrder>()
+            .Where(Filter.In<SalesOrder>(x => x.No, ["A", "B"], ODataInStyle.Native))
+            .ToListAsync();
+
+        Assert.Contains("$schemaversion=2.1", url!, StringComparison.Ordinal);
+
+        // "no in ('A','B')" once percent-encoded — parentheses become %28/%29.
+        Assert.Contains("no%20in%20%28", url!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task No_SchemaVersion_Is_Sent_By_Default()
+    {
+        string? url = null;
+
+        var client = CreateClient(WithToken(req =>
+        {
+            url = req.RequestUri!.AbsoluteUri;
+            return Json("""{"value":[]}""");
+        }));
+
+        await client.Query<SalesOrder>().ToListAsync();
+
+        Assert.DoesNotContain("$schemaversion", url!, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Blank_SchemaVersion_Is_Treated_As_Unset(string value)
+    {
+        string? url = null;
+
+        var client = CreateClient(
+            WithToken(req =>
+            {
+                url = req.RequestUri!.AbsoluteUri;
+                return Json("""{"value":[]}""");
+            }),
+            configure: o => o.SchemaVersion = value);
+
+        await client.Query<SalesOrder>().ToListAsync();
+
+        Assert.DoesNotContain("$schemaversion", url!, StringComparison.Ordinal);
+    }
+
+    #endregion
 }

@@ -86,7 +86,8 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             company,
             options.MaxUrlLength,
             options.UrlLengthWarningThreshold,
-            observer);
+            observer,
+            options.SchemaVersion);
 
     /// <inheritdoc />
     public string Company => _company;

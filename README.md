@@ -313,10 +313,21 @@ var filter = Filter.Equals<SalesOrder>(o => o.Status, "Open")
                    .And(Filter.GreaterThan<SalesOrder>(o => o.Amount, 100));
 ```
 
-`Filter.In` renders a **same-field `or`-chain**, not the OData `in` operator — Business
-Central rejects `in` without `$schemaversion=2.1` (`BadRequest_MethodNotImplemented`).
+`Filter.In` renders a **same-field `or`-chain** by default, not the OData `in` operator.
+Business Central supports `in`, but [only from schema version 2.1](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-filter-expressions-in-odata-uris);
+earlier versions answer `BadRequest_MethodNotImplemented` (verified against a live tenant).
 With an empty collection it yields a filter matching nothing, so passing an empty key set
 is safe.
+
+If your endpoint serves schema version 2.1, opt in — it is roughly **half** the encoded URL
+length per key. Both settings are needed; the operator alone will still be rejected:
+
+```csharp
+services.AddBusinessCentral(o => o.SchemaVersion = "2.1");
+
+var filter = Filter.In<Item>(i => i.No, keys, ODataInStyle.Native);
+// no in ('EBH100','EBT200')  →  ?$filter=...&$schemaversion=2.1
+```
 
 > **Business Central limitation:** `or` only works between filters on the *same* field.
 > Combining filters on different fields with `.Or(...)` — `field1 eq 1 or field2 eq 2` —
@@ -330,10 +341,11 @@ is safe.
 
 ## URL length and bulk key lookups
 
-Because `Filter.In` renders an `or`-chain, a bulk key lookup grows the URL roughly **four
-times faster** than the `in (...)` form suggests: `(no eq 'EBH100') or ` costs about 40
-encoded characters per key where `'EBH100',` would cost 10. Past the server's limit
-Business Central answers with a `400` or `404` that never mentions length.
+Because `Filter.In` defaults to an `or`-chain, a bulk key lookup grows the URL about **twice
+as fast** as the `in (...)` form: `(no eq 'EBH100') or ` costs 38 encoded characters per key
+where `'EBH100',` costs 17. Past the server's limit Business Central answers with a `400` or
+`404` that never mentions length. (On schema version 2.1 you can halve this — see
+`ODataInStyle.Native` above.)
 
 The client measures and guards:
 

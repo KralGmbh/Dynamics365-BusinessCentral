@@ -27,7 +27,7 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
   Central currently accepts into client-side exceptions on upgrade; the warning band instead
   lets a deployment measure the length distribution its real workload produces and size
   chunking against evidence. This matters because `Filter.In` renders an `or`-chain (BC
-  rejects the OData `in` operator), which costs about twice per key what `in (...)`
+  gates the OData `in` operator on schema version 2.1), which costs about twice per key what `in (...)`
   would — so bulk lookups approach the limit far sooner than the value count suggests.
 
   Server-issued `@odata.nextLink` continuations are never checked: the server produced them,
@@ -76,10 +76,19 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
   - **`BusinessCentralOptions.DeriveSelect`** (default `true`) — the global counterpart to the
     per-query `SelectAll()`. A consumer whose entity classes are broad shared types rather than
     per-use projections can restore pre-2.0 behaviour in one line instead of at every call site.
-  - **`Filter.In(field, values, ODataInStyle.Native)`** emits `field in (…)` instead of the
-    `or`-chain. The chain remains the default because one live tenant answered
-    `BadRequest_MethodNotImplemented` to `in`; an endpoint serving `$schemaversion=2.1` was
-    paying about twice the encoded URL length per key for a workaround it does not need.
+  - **`BusinessCentralOptions.SchemaVersion`** (default `null`) sends `$schemaversion=` on
+    queries, and **`Filter.In(field, values, ODataInStyle.Native)`** emits `field in (…)`
+    instead of the `or`-chain. They are a pair, and both are needed.
+
+    Microsoft documents the `in` operator as working
+    [only in `$schemaversion=2.1`](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-filter-expressions-in-odata-uris);
+    below that, Business Central answers `BadRequest_MethodNotImplemented`, which is what a
+    live tenant did and why the `or`-chain remains the default. But an endpoint that *is* on
+    2.1 was previously stuck paying about twice the encoded URL length per key for a
+    workaround it does not need, with no way to opt out — and no way to request the schema
+    version even if there had been. Schema version 2.1 also enables nested function calls
+    such as `contains(tolower(field), 'x')`, which earlier versions answer with an error or
+    an undefined result.
   - **`MaxUrlLength`'s documentation now says the `4000` default is an estimate, not a
     measurement** — reasoned from IIS limits rather than observed, unlike every other default
     in the package. `UrlLengthWarningThreshold` exists to replace it with evidence.
