@@ -81,6 +81,46 @@ public sealed class BusinessCentralOptions
     public TimeSpan? RequestTimeout { get; set; }
 
     /// <summary>
+    /// Whether reads may be served from a Business Central database replica, sent as the
+    /// <c>Data-Access-Intent</c> header. Defaults to
+    /// <see cref="BusinessCentralDataAccessIntent.Unspecified"/> — no header, and the server
+    /// uses whatever the page or query declares.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="BusinessCentralDataAccessIntent.ReadOnly"/> is Microsoft's first listed
+    /// client-performance recommendation: it lets Business Central answer from a replica,
+    /// taking load off the primary database. Worth setting for reporting, synchronisation and
+    /// any other read-dominated workload.
+    /// </para>
+    /// <para>
+    /// <b>Opt-in on purpose.</b> Where a replica is genuinely used, replication lag means a
+    /// read issued straight after a write may not observe it — so this is safe for a sync job
+    /// and wrong for a read-after-write flow, and the package cannot tell which you are. The
+    /// header is only ever sent on <c>GET</c>: Microsoft documents that modification requests
+    /// reject <c>ReadOnly</c> outright, so applying it blindly would break every write.
+    /// </para>
+    /// <para>
+    /// See <see href="https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/odata-client-performance">
+    /// OData/API web service client performance</see>.
+    /// </para>
+    /// </remarks>
+    public BusinessCentralDataAccessIntent DataAccessIntent { get; set; }
+
+    /// <summary>
+    /// Value for the <c>Accept-Language</c> header, e.g. <c>"en-US"</c> or <c>"de-DE"</c>.
+    /// Defaults to <see langword="null"/> — no header, and Business Central uses the tenant
+    /// default.
+    /// </summary>
+    /// <remarks>
+    /// Controls the language of Business Central's error messages, which is what makes it
+    /// worth setting: an integration that logs server errors wants them in one predictable
+    /// language rather than whatever the tenant happens to be configured for. Microsoft notes
+    /// it also governs regional formatting of responses.
+    /// </remarks>
+    public string? AcceptLanguage { get; set; }
+
+    /// <summary>
     /// OData schema version to request, sent as <c>$schemaversion=</c> on queries. Defaults to
     /// <see langword="null"/> — no schema version is sent, and Business Central serves its
     /// default.

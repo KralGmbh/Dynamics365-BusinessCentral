@@ -61,7 +61,7 @@ Responses are **deliberately buffered as strings** before deserialization: the r
 
 Tests must set `Retry.BaseDelay`/`MaxDelay` to zero or they sleep; `TestBase.CreateClient` already does.
 
-The client never mutates the injected `HttpClient` (it may be pooled). Accept/User-Agent are set per request in `AddJsonHeaders`.
+The client never mutates the injected `HttpClient` (it may be pooled). Accept/User-Agent are set per request in `AddJsonHeaders`; the optional `Data-Access-Intent` and `Accept-Language` headers are applied by `ApplyRequestOptions`, which every request factory calls. **`Data-Access-Intent` must stay GET-only** — Microsoft documents that writes reject `ReadOnly` outright, so `AddDataAccessIntent` checks the method itself rather than trusting call sites. Both headers are Business Central's, not Entra's: the token provider builds its own requests, which is what keeps them off the token POST even when a manually constructed client shares one `HttpClient`.
 
 ### Token acquisition
 

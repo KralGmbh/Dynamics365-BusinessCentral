@@ -147,10 +147,11 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         return await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static HttpRequestMessage CreateMetadataRequest(string url)
+    private HttpRequestMessage CreateMetadataRequest(string url)
     {
         var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.AddMetadataHeaders();
+        ApplyRequestOptions(req);
         return req;
     }
 
@@ -367,7 +368,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static HttpRequestMessage CreatePageRequest(string url, int? maxPageSize)
+    private HttpRequestMessage CreatePageRequest(string url, int? maxPageSize)
     {
         var req = CreateJsonRequest(HttpMethod.Get, url);
 
@@ -379,10 +380,11 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         return req;
     }
 
-    private static HttpRequestMessage CreateJsonRequest(HttpMethod method, string url, object? payload = null)
+    private HttpRequestMessage CreateJsonRequest(HttpMethod method, string url, object? payload = null)
     {
         var req = new HttpRequestMessage(method, url);
         req.AddJsonHeaders();
+        ApplyRequestOptions(req);
 
         if (payload != null)
         {
@@ -393,6 +395,16 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         }
 
         return req;
+    }
+
+    /// <summary>
+    /// Applies the registration-level headers that are not specific to one call: the
+    /// read-replica hint and the response language. Both are opt-in and absent by default.
+    /// </summary>
+    private void ApplyRequestOptions(HttpRequestMessage request)
+    {
+        request.AddDataAccessIntent(_options.DataAccessIntent);
+        request.AddAcceptLanguage(_options.AcceptLanguage);
     }
 
     /// <inheritdoc />

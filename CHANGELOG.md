@@ -67,6 +67,23 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
   public API, and the validator needs exactly the projection the fluent builder would send —
   reimplementing those rules is precisely the drift this feature exists to prevent.
 
+- **`BusinessCentralOptions.DataAccessIntent`** (default `Unspecified`): sends
+  `Data-Access-Intent: ReadOnly`, letting Business Central answer reads from a database
+  replica. This is the first recommendation in
+  [Microsoft's OData client-performance guidance](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/odata-client-performance)
+  and is worth setting for reporting or synchronisation workloads.
+
+  Opt-in on purpose: where a replica is genuinely used, replication lag means a read issued
+  straight after a write may not observe it — correct for a sync job, wrong for a
+  read-after-write flow, and the package cannot tell which yours is. The header is sent on
+  `GET` **only**, because Microsoft documents that modification requests reject `ReadOnly`
+  outright; attaching it to writes would turn every working write into an error. Streaming
+  continuations and `$metadata` carry it too; the token request never does.
+
+- **`BusinessCentralOptions.AcceptLanguage`** (default `null`): sets `Accept-Language`, which
+  fixes the language of Business Central's error messages instead of letting it vary with
+  tenant configuration. Sent on reads and writes alike.
+
 - **Escape hatches for behaviour inferred from a single deployment.** Most of 2.0's polish came
   from one production consumer's feedback, which is why the package is as well-measured as it
   is — but a measurement from one tenant must never be the only thing a consumer can express.
@@ -136,6 +153,33 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
   callback and the `or`-chain arithmetic.
 
 - Testing package README: the projection validator, and what it does and does not prove.
+
+- **README gained a `Performance` section**, mapping
+  [Microsoft's OData client-performance guidance](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/odata-client-performance)
+  onto the package: the two new headers, what the package already does (derived `$select`,
+  server-driven paging, no `$skip` loop), and what is still the caller's job — pairing `Top`
+  with `OrderBy` for stable ranking, filtering on `LastModifiedOn` for history windows, and
+  limiting the set around an expensive `$expand`.
+
+  It also records independent support for the derived `$select` default: Microsoft notes that
+  Business Central supports table extensions, so *"If you omit the `$select` clause, your query
+  will return all fields from the table, including fields from other extensions"* — the
+  projection is a documented performance measure, not only an ergonomic one.
+
+- **FlowFilters are documented.** Business Central exposes a page's FlowFilters as ordinary
+  `Edm.String` properties named `*_Filter`; they do not filter rows but parameterise the
+  FlowField calculations on the rows returned. They work through the normal filter API, which
+  is not obvious from either side.
+
+### Deferred to 2.1
+
+- **Deriving `$select` inside `$expand`** ([#55](https://github.com/KralGmbh/Dynamics365-BusinessCentral/issues/55)).
+  Microsoft recommends it and the package does not do it, so an expand still returns every
+  column of the expanded entity. Held back because it is the same silent-narrowing risk as the
+  root projection, and one such change per release is enough.
+- **OData transactional `$batch`** ([#56](https://github.com/KralGmbh/Dynamics365-BusinessCentral/issues/56)).
+  The real gap is atomicity rather than request count: a business operation spanning several
+  writes currently has no transactional boundary.
 
 - **README gained a `Scope` section.** The package targets the OData v4 **published-pages**
   endpoint on Business Central SaaS and builds URLs around `Company('NAME')`. The standard

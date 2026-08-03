@@ -1,3 +1,4 @@
+using Dynamics365.BusinessCentral.Options;
 using System.Net.Http.Headers;
 
 namespace Dynamics365.BusinessCentral.Client;
@@ -22,6 +23,34 @@ internal static class HttpRequestExtensions
 
         if (request.Headers.UserAgent.Count == 0)
             request.Headers.UserAgent.ParseAdd(UserAgent);
+    }
+
+    /// <summary>
+    /// Adds <c>Data-Access-Intent</c>, letting Business Central serve the read from a database
+    /// replica. <b>GET only</b> — Microsoft documents that modification requests reject
+    /// <c>ReadOnly</c> outright, so applying it to a write would turn a working call into an
+    /// error.
+    /// </summary>
+    public static void AddDataAccessIntent(
+        this HttpRequestMessage request,
+        BusinessCentralDataAccessIntent intent)
+    {
+        if (intent == BusinessCentralDataAccessIntent.Unspecified || request.Method != HttpMethod.Get)
+            return;
+
+        request.Headers.TryAddWithoutValidation("Data-Access-Intent", intent.ToString());
+    }
+
+    /// <summary>
+    /// Adds <c>Accept-Language</c>, which selects the language of Business Central's error
+    /// messages and the regional formatting of its responses.
+    /// </summary>
+    public static void AddAcceptLanguage(this HttpRequestMessage request, string? language)
+    {
+        if (string.IsNullOrWhiteSpace(language))
+            return;
+
+        request.Headers.TryAddWithoutValidation("Accept-Language", language);
     }
 
     /// <summary>

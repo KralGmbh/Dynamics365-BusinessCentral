@@ -388,6 +388,79 @@ var lines = await client.QueryAsync<ProdOrderLine>(
              BusinessCentralField.Of<ProdOrderLine>(l => l.Quantity)]);
 ```
 
+# ⚡ Performance
+
+Following [Microsoft's OData client-performance guidance](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/odata-client-performance).
+Some of it the package already does for you; two settings are yours to turn on.
+
+## Read from a database replica
+
+Microsoft's first recommendation. `Data-Access-Intent: ReadOnly` lets Business Central answer
+a `GET` from a replica, taking load off the primary:
+
+```csharp
+services.AddBusinessCentral(o =>
+{
+    o.DataAccessIntent = BusinessCentralDataAccessIntent.ReadOnly;
+});
+```
+
+**Opt-in, and deliberately so.** Where a replica is genuinely used, replication lag means a
+read issued straight after a write may not see it — right for a sync or reporting job, wrong
+for a read-after-write flow, and the package cannot tell which yours is. The header is only
+ever sent on `GET`; Microsoft documents that writes reject `ReadOnly` outright, so the client
+never attaches it to `POST`/`PATCH`/`PUT`/`DELETE`.
+
+## Response language
+
+`Accept-Language` fixes the language of Business Central's error messages — worth setting so
+logs don't vary with tenant configuration. Microsoft notes it also governs regional
+formatting of responses.
+
+```csharp
+services.AddBusinessCentral(o => o.AcceptLanguage = "en-US");
+```
+
+## Already handled
+
+| Guidance | How the package follows it |
+| --- | --- |
+| *"Specify the columns you care about in the `$select` clause"* | The fluent builder derives `$select` from the entity type — see [Querying](#-querying). Business Central supports table extensions, so **omitting `$select` returns every field including ones added by other extensions**; this is why the derived projection is on by default |
+| *"Do not use `$top` and `$skip` to implement client-driven paging"* | Streaming reads follow `@odata.nextLink`. There is no `$skip` loop; `$skip` is sent only when you ask for a starting offset |
+| *"Using server-driven paging"* | The default. No page size is sent unless you set one, and then as `Prefer: odata.maxpagesize` |
+
+## Worth knowing
+
+- **`$top` on its own is fine** — Microsoft only discourages it *combined with* `$skip`. If
+  you are ranking rather than sampling, pair `Top(n)` with `OrderBy(...)`: without an explicit
+  order the server's "top n" is not stable between calls.
+- **Filter on `LastModifiedOn` for historical queries.** Business Central updates that system
+  field on write, which makes it the efficient choice for "changed in the last 30 days"
+  windows.
+- **Limit the set when `$expand` is expensive.** Add a `Where(...)` or `Top(n)` alongside a
+  costly expand rather than expanding the whole set.
+- **`$expand` currently sends no inner `$select`**, so an expanded entity comes back with all
+  its properties. Pass the expand clause as a string to narrow it yourself —
+  `Expand("salesOrderLines($select=lineNo,quantity)")` — until this is derived automatically
+  ([#55](https://github.com/KralGmbh/Dynamics365-BusinessCentral/issues/55)).
+
+## FlowFilters
+
+Business Central exposes a page's [FlowFilters](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-flowfilters-in-odata-uris)
+as ordinary `Edm.String` properties named `*_Filter`. They do not filter rows — they
+parameterise the FlowField calculations on the rows you get back:
+
+```csharp
+// Qty_on_Sales_Order comes back calculated for the GREEN location only
+var item = await client.Query<ItemCard>()
+    .Where(f => f.Equals(x => x.No, "1906-S")
+                 .And(f.Equals(x => x.LocationFilter, "GREEN")))
+    .FirstOrDefaultAsync();
+```
+
+Only the FlowFilters needed by FlowFields actually shown on the page appear in `$metadata`,
+so the set is usually smaller than the table defines.
+
 # ♻️ Throttling and retries
 
 Business Central throttles aggressively. Throttled (`429`) and transient (`408`, `502`,
