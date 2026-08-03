@@ -174,51 +174,57 @@ public sealed class BusinessCentralOptions
     public bool DeriveSelect { get; set; } = true;
 
     /// <summary>
-    /// Longest request URL the client will build before refusing to send it, in characters.
-    /// Defaults to <c>4000</c>; set to <see langword="null"/> to disable the check entirely.
+    /// Longest <b>query string</b> the client will build before refusing to send the request,
+    /// in characters. Defaults to <c>8000</c>; set to <see langword="null"/> to disable the
+    /// check entirely.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Nothing about a URL that is merely long is invalid — this guards the point past which
-    /// Business Central (or the IIS/gateway in front of it, whose own defaults are a 4,096-byte
-    /// URL and a 2,048-byte query string) answers with an opaque <c>400</c> or <c>404</c> that
-    /// never mentions length. The client turns that into an <see cref="ArgumentException"/>
-    /// naming the actual length, the limit and the likely cause, thrown before the request
-    /// leaves the process.
+    /// The query string, not the whole URL, because that is what Business Central's gateway
+    /// actually limits. Measured against a live SaaS tenant: the ceiling sits at <b>8,099</b>
+    /// accepted query-string characters and is invariant across environments, while the full
+    /// URL is not — the prefix moves with environment name, company name
+    /// (<c>Company('KRAL%20AG')</c>, where the escaped space inflates it further) and
+    /// entity-set path. A full-URL limit would be too strict on deployments with long prefixes
+    /// and too loose on short ones.
     /// </para>
     /// <para>
-    /// <b>The default of 4,000 is an estimate, not a measurement.</b> Unlike the rest of this
-    /// package's defaults it was reasoned from those IIS limits rather than observed against a
-    /// tenant, because the real ceiling depends on the deployment and on whatever sits in front
-    /// of it. That is what <see cref="UrlLengthWarningThreshold"/> is for: measure your own
-    /// workload, then set this from evidence — or to <see langword="null"/> if your deployment
-    /// accepts more.
+    /// Past the server's own ceiling Business Central answers <c>414 URI Too Long</c>, which is
+    /// not opaque. The value of failing client-side first is the diagnosis: this throws an
+    /// <see cref="ArgumentException"/> naming the actual length, the limit, the <c>or</c>-clause
+    /// count and <c>Filter.In</c> as the likely cause, before the request leaves the process.
     /// </para>
     /// <para>
-    /// The usual cause is a bulk key lookup: <c>Filter.In</c> renders a same-field <c>or</c>-chain
-    /// because Business Central rejects the OData <c>in</c> operator, and <c>(no eq 'EBH100') or </c>
-    /// costs about twice what <c>'EBH100',</c> would once percent-encoded (38 characters against 17).
-    /// Chunk the values.
+    /// The usual cause is a bulk key lookup. <c>Filter.In</c> renders a same-field
+    /// <c>or</c>-chain by default because Business Central gates the OData <c>in</c> operator on
+    /// schema version 2.1, and <c>(no eq 'EBH100') or </c> encodes to 38 characters per key
+    /// against 17 for <c>'EBH100',</c>. Setting <see cref="SchemaVersion"/> to <c>"2.1"</c> and
+    /// passing <see cref="OData.ODataInStyle.Native"/> recovers essentially all of that.
     /// </para>
     /// <para>
     /// Server-issued <c>@odata.nextLink</c> continuations are never checked — the server
-    /// produced them, so its own limits already apply.
+    /// produced them, so its own limits already applied.
+    /// </para>
+    /// <para>
+    /// <b>Measured on one tenant and one gateway.</b> The default leaves headroom under 8,099
+    /// rather than sitting on it; raise it if your deployment demonstrably accepts more.
     /// </para>
     /// </remarks>
-    public int? MaxUrlLength { get; set; } = 4000;
+    public int? MaxQueryStringLength { get; set; } = 8000;
 
     /// <summary>
-    /// URL length, in characters, at which <c>IBusinessCentralObserver.OnUrlLengthWarning</c>
-    /// is raised. Defaults to <c>2000</c>; set to <see langword="null"/> to disable the
-    /// warning. Must not exceed <see cref="MaxUrlLength"/>.
+    /// Query-string length, in characters, at which
+    /// <c>IBusinessCentralObserver.OnUrlLengthWarning</c> is raised. Defaults to <c>6000</c>;
+    /// set to <see langword="null"/> to disable the warning. Must not exceed
+    /// <see cref="MaxQueryStringLength"/>.
     /// </summary>
     /// <remarks>
-    /// Deliberately well below <see cref="MaxUrlLength"/>: the gap is the measurement window.
-    /// A URL in it is sent normally and observed, so a deployment can discover the length
-    /// distribution its real workload produces — and size chunking against evidence — without
-    /// a single working query being turned into an exception.
+    /// Deliberately below <see cref="MaxQueryStringLength"/>: the gap is the measurement
+    /// window. A request in it is sent normally and observed, so a deployment can discover the
+    /// length distribution its real workload produces — and size chunking against evidence —
+    /// without a single working query being turned into an exception.
     /// </remarks>
-    public int? UrlLengthWarningThreshold { get; set; } = 2000;
+    public int? QueryStringLengthWarningThreshold { get; set; } = 6000;
 
     /// <summary><see cref="BaseUrl"/> with all placeholders substituted.</summary>
     internal string ResolvedBaseUrl => ResolvePlaceholders(BaseUrl);

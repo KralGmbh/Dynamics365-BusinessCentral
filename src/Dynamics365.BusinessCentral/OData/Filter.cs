@@ -141,7 +141,7 @@ public static class Filter
     /// <c>$schemaversion=2.1</c>, and a live tenant on an earlier version answered
     /// <c>BadRequest_MethodNotImplemented</c>. A deployment that <i>is</i> on 2.1 pays about
     /// <b>twice</b> the encoded URL length per key for a workaround it does not need — and
-    /// reaches <c>BusinessCentralOptions.MaxUrlLength</c> twice as fast.
+    /// reaches <c>BusinessCentralOptions.MaxQueryStringLength</c> twice as fast.
     /// </para>
     /// <para>
     /// Pass <see cref="ODataInStyle.Native"/> to emit <c>field in (v1,v2,…)</c> instead. This

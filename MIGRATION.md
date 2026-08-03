@@ -211,23 +211,27 @@ message.
 
 ### A long `$filter` is now refused client-side instead of failing opaquely
 
-New in `2.0.0-alpha.7`. `BusinessCentralOptions.MaxUrlLength` defaults to `4000`
-characters; a request that builds a longer URL throws an `ArgumentException` before it is
-sent, rather than drawing an opaque `400`/`404` from Business Central that never mentions
-length. `UrlLengthWarningThreshold` (default `2000`) raises the new
+New in `2.0.0-alpha.7`. `BusinessCentralOptions.MaxQueryStringLength` defaults to `8000`
+characters; a request that builds a longer **query string** throws an `ArgumentException`
+before it is sent. `QueryStringLengthWarningThreshold` (default `6000`) raises the new
 `IBusinessCentralObserver.OnUrlLengthWarning` while still sending the request.
 
-This only bites bulk key lookups, and mainly through `Filter.In`: it defaults to an
-`or`-chain because Business Central gates the OData `in` operator on schema version 2.1
-(set `BusinessCentralOptions.SchemaVersion = "2.1"` and pass `ODataInStyle.Native` to halve
-the length, if your endpoint serves it), and each encoded
-`(no eq 'EBH100') or ` encodes to 38 characters against 17 for the `'EBH100',` it replaces
-— about twice the width per key. If
-you chunk `In` values, this is where you find out your chunk size was tuned for the wrong
-arithmetic.
+The limit is on the query string, not the whole URL, because that is what Business Central's
+gateway actually limits — measured at **8,099** accepted characters, invariant across two
+environments whose full URLs differed. Past the server's own ceiling you get
+`414 URI Too Long`, which is not cryptic; the value of failing client-side first is that the
+message names the length, the limit, the `or`-clause count and `Filter.In` as the likely
+cause.
 
-If you have a working query between `4000` and whatever your deployment actually accepts,
-raise `MaxUrlLength` or set it to `null`. Server-issued `@odata.nextLink` continuations are
+This only bites bulk key lookups, and mainly through `Filter.In`: it defaults to an
+`or`-chain because Business Central gates the OData `in` operator on schema version 2.1, and
+each encoded `(no eq 'EBH100') or ` costs 38 characters against 17 for the `'EBH100',` it
+replaces. The cheapest fix is usually to stop paying for the workaround — set
+`SchemaVersion = "2.1"` and pass `ODataInStyle.Native`, verified working against a live
+tenant.
+
+If you have a working query above `8000` characters of query string, raise
+`MaxQueryStringLength` or set it to `null`. Server-issued `@odata.nextLink` continuations are
 never checked.
 
 ### Message-level retry policies must re-key their exceptions
@@ -401,6 +405,6 @@ There is no deprecation on the path-based API; migrate at your own pace, or not 
       normal test suite detects it
 - [ ] Check inherited base classes of system fields against the entity sets that inherit
       them; not every published page exposes them
-- [ ] Re-check chunk sizes on bulk key lookups against `MaxUrlLength` (an `or`-chain costs
+- [ ] Re-check chunk sizes on bulk key lookups against `MaxQueryStringLength` (an `or`-chain costs
       ~4× per key what `in (...)` would)
 - [ ] Optionally simplify configuration and drop hand-built `BaseUrl`

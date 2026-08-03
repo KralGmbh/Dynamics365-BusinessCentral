@@ -67,65 +67,66 @@ public class OptionsValidatorTests
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public void Non_Positive_MaxUrlLength_Fails_Validation(int value)
+    public void Non_Positive_MaxQueryStringLength_Fails_Validation(int value)
     {
         var options = Valid();
-        options.MaxUrlLength = value;
+        options.MaxQueryStringLength = value;
 
-        Assert.Contains(Failures(options), f => f.Contains(nameof(options.MaxUrlLength)));
+        Assert.Contains(Failures(options), f => f.Contains(nameof(options.MaxQueryStringLength)));
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public void Non_Positive_UrlLengthWarningThreshold_Fails_Validation(int value)
+    public void Non_Positive_QueryStringLengthWarningThreshold_Fails_Validation(int value)
     {
         var options = Valid();
-        options.UrlLengthWarningThreshold = value;
+        options.QueryStringLengthWarningThreshold = value;
 
-        Assert.Contains(Failures(options), f => f.Contains(nameof(options.UrlLengthWarningThreshold)));
+        Assert.Contains(Failures(options), f => f.Contains(nameof(options.QueryStringLengthWarningThreshold)));
     }
 
     // A threshold above the limit can never be reached, silently costing the deployment the
     // measurement window the two settings exist to create.
     [Fact]
-    public void Warning_Threshold_Above_MaxUrlLength_Fails_Validation()
+    public void Warning_Threshold_Above_MaxQueryStringLength_Fails_Validation()
     {
         var options = Valid();
-        options.MaxUrlLength = 1000;
-        options.UrlLengthWarningThreshold = 2000;
+        options.MaxQueryStringLength = 1000;
+        options.QueryStringLengthWarningThreshold = 2000;
 
-        Assert.Contains(Failures(options), f => f.Contains(nameof(options.UrlLengthWarningThreshold)));
+        Assert.Contains(Failures(options), f => f.Contains(nameof(options.QueryStringLengthWarningThreshold)));
     }
 
     [Fact]
-    public void Warning_Threshold_Equal_To_MaxUrlLength_Passes()
+    public void Warning_Threshold_Equal_To_MaxQueryStringLength_Passes()
     {
         var options = Valid();
-        options.MaxUrlLength = 2000;
-        options.UrlLengthWarningThreshold = 2000;
+        options.MaxQueryStringLength = 2000;
+        options.QueryStringLengthWarningThreshold = 2000;
 
-        Assert.DoesNotContain(Failures(options), f => f.Contains(nameof(options.UrlLengthWarningThreshold)));
+        Assert.DoesNotContain(Failures(options), f => f.Contains(nameof(options.QueryStringLengthWarningThreshold)));
     }
 
     [Fact]
-    public void Url_Length_Defaults_Pass_Validation()
+    public void Query_String_Length_Defaults_Pass_Validation()
     {
         var options = Valid();
 
-        Assert.Equal(4000, options.MaxUrlLength);
-        Assert.Equal(2000, options.UrlLengthWarningThreshold);
-        Assert.DoesNotContain(Failures(options), f => f.Contains("UrlLength"));
+        // Measured: the gateway accepts 8,099 query-string characters. Defaults leave headroom.
+        Assert.Equal(8000, options.MaxQueryStringLength);
+        Assert.Equal(6000, options.QueryStringLengthWarningThreshold);
+        Assert.DoesNotContain(Failures(options), f => f.Contains("QueryStringLength"));
     }
 
     // Disabling one must not implicate the other.
     [Fact]
-    public void Null_Url_Length_Settings_Pass_Validation()
+    public void Null_Query_String_Length_Settings_Pass_Validation()
     {
         var options = Valid();
-        options.MaxUrlLength = null;
-        options.UrlLengthWarningThreshold = null;
+        options.MaxQueryStringLength = null;
+        options.QueryStringLengthWarningThreshold = null;
 
-        Assert.DoesNotContain(Failures(options), f => f.Contains("UrlLength"));
+        Assert.DoesNotContain(Failures(options), f => f.Contains("QueryStringLength"));
     }
 }

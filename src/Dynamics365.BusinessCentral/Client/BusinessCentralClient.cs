@@ -84,8 +84,8 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         IBusinessCentralObserver observer) =>
         new(options.ResolvedBaseUrl,
             company,
-            options.MaxUrlLength,
-            options.UrlLengthWarningThreshold,
+            options.MaxQueryStringLength,
+            options.QueryStringLengthWarningThreshold,
             observer,
             options.SchemaVersion);
 

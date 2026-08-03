@@ -20,7 +20,7 @@ public class UrlLengthGuardTests : TestBase
     #region Hard limit
 
     [Fact]
-    public async Task Url_Past_MaxUrlLength_Throws_Before_Sending()
+    public async Task Url_Past_MaxQueryStringLength_Throws_Before_Sending()
     {
         var dataRequests = 0;
 
@@ -30,14 +30,14 @@ public class UrlLengthGuardTests : TestBase
                 dataRequests++;
                 return Json("""{"value":[]}""");
             }),
-            configure: o => o.MaxUrlLength = 500);
+            configure: o => o.MaxQueryStringLength = 500);
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             client.Query<SalesOrder>()
                 .Where(f => f.In(x => x.No, ManyKeys(60)))
                 .ToListAsync());
 
-        Assert.Contains("MaxUrlLength", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("MaxQueryStringLength", ex.Message, StringComparison.Ordinal);
         Assert.Contains("500", ex.Message, StringComparison.Ordinal);
 
         // The URL is built before the token is acquired, so nothing at all left the process.
@@ -47,7 +47,7 @@ public class UrlLengthGuardTests : TestBase
     [Fact]
     public async Task Too_Long_Message_Names_The_Actual_Length()
     {
-        var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxUrlLength = 400);
+        var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxQueryStringLength = 400);
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             client.Query<SalesOrder>()
@@ -55,14 +55,14 @@ public class UrlLengthGuardTests : TestBase
                 .ToListAsync());
 
         // The length is rendered with a thousands separator, so match the digits either way.
-        Assert.Matches(@"produced a [\d,]+-character URL", ex.Message);
+        Assert.Matches(@"produced a [\d,]+-character query string", ex.Message);
     }
 
     /// <summary>L2: the or-chain is the dominant cause and its cost is the least obvious.</summary>
     [Fact]
     public async Task Or_Chained_Filter_Message_Blames_Filter_In()
     {
-        var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxUrlLength = 400);
+        var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxQueryStringLength = 400);
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             client.Query<SalesOrder>()
@@ -78,19 +78,19 @@ public class UrlLengthGuardTests : TestBase
     [Fact]
     public async Task Non_Or_Chained_Filter_Message_Omits_The_In_Advice()
     {
-        var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxUrlLength = 200);
+        var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxQueryStringLength = 200);
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             client.Query<SalesOrder>()
                 .Where(f => f.Equals(x => x.No, new string('X', 300)))
                 .ToListAsync());
 
-        Assert.Contains("-character URL", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("-character query string", ex.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("Filter.In", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Null_MaxUrlLength_Disables_The_Limit()
+    public async Task Null_MaxQueryStringLength_Disables_The_Limit()
     {
         string? seen = null;
 
@@ -102,8 +102,8 @@ public class UrlLengthGuardTests : TestBase
             }),
             configure: o =>
             {
-                o.MaxUrlLength = null;
-                o.UrlLengthWarningThreshold = null;
+                o.MaxQueryStringLength = null;
+                o.QueryStringLengthWarningThreshold = null;
             });
 
         await client.Query<SalesOrder>()
@@ -133,8 +133,8 @@ public class UrlLengthGuardTests : TestBase
             observer,
             o =>
             {
-                o.UrlLengthWarningThreshold = 300;
-                o.MaxUrlLength = 100_000;
+                o.QueryStringLengthWarningThreshold = 300;
+                o.MaxQueryStringLength = 100_000;
             });
 
         await client.Query<SalesOrder>()
@@ -147,8 +147,12 @@ public class UrlLengthGuardTests : TestBase
         Assert.False(warning.ExceedsLimit);
         Assert.Equal(300, warning.Threshold);
         Assert.Equal(100_000, warning.Limit);
-        Assert.True(warning.Length >= 300);
-        Assert.Equal(warning.Length, warning.Url.Length);
+        Assert.True(warning.QueryStringLength >= 300);
+        Assert.Equal(warning.Url.Length, warning.UrlLength);
+
+        // The measured quantity is the query string, so it must be strictly smaller than the
+        // full URL — the prefix is what a full-URL limit would have wrongly counted.
+        Assert.True(warning.QueryStringLength < warning.UrlLength);
         Assert.True(warning.OrClauseCount >= 19, $"expected an or-chain, counted {warning.OrClauseCount}");
     }
 
@@ -166,8 +170,8 @@ public class UrlLengthGuardTests : TestBase
             observer,
             o =>
             {
-                o.UrlLengthWarningThreshold = 300;
-                o.MaxUrlLength = 500;
+                o.QueryStringLengthWarningThreshold = 300;
+                o.MaxQueryStringLength = 500;
             });
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
@@ -202,8 +206,8 @@ public class UrlLengthGuardTests : TestBase
             observer,
             o =>
             {
-                o.UrlLengthWarningThreshold = null;
-                o.MaxUrlLength = 500;
+                o.QueryStringLengthWarningThreshold = null;
+                o.MaxQueryStringLength = 500;
             });
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
@@ -221,7 +225,7 @@ public class UrlLengthGuardTests : TestBase
         var client = CreateClient(
             AlwaysEmpty(),
             new ThrowingUrlObserver(),
-            o => o.UrlLengthWarningThreshold = 100);
+            o => o.QueryStringLengthWarningThreshold = 100);
 
         var rows = await client.Query<SalesOrder>()
             .Where(f => f.In(x => x.No, ManyKeys(20)))
@@ -270,7 +274,7 @@ public class UrlLengthGuardTests : TestBase
                         """)
                     : Json("""{"value":[{"No":"B"}]}""");
             }),
-            configure: o => o.MaxUrlLength = 400);
+            configure: o => o.MaxQueryStringLength = 400);
 
         var all = await client.Query<SalesOrder>().ToAllAsync();
 
@@ -286,7 +290,7 @@ public class UrlLengthGuardTests : TestBase
     [Fact]
     public async Task Path_Based_Query_Is_Guarded_Too()
     {
-        var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxUrlLength = 300);
+        var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxQueryStringLength = 300);
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
             client.QueryAsync<SalesOrder>(

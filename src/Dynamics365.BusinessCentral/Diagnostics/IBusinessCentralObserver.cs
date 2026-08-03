@@ -46,7 +46,8 @@ public interface IBusinessCentralObserver
 
     /// <summary>
     /// Raised when a built request URL crossed
-    /// <c>BusinessCentralOptions.UrlLengthWarningThreshold</c>, before the request is sent.
+    /// <c>BusinessCentralOptions.QueryStringLengthWarningThreshold</c>, before the request is
+    /// sent.
     /// Fires whether or not the URL also exceeded the hard limit — check
     /// <see cref="BusinessCentralUrlLengthInfo.ExceedsLimit"/>. Has a default no-op
     /// implementation so existing observers keep compiling.

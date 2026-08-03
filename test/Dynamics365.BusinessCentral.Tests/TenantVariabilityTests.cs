@@ -118,7 +118,7 @@ public class TenantVariabilityTests : TestBase
     /// </summary>
     /// <remarks>
     /// Measured on the percent-encoded form, since that is what counts against
-    /// <c>MaxUrlLength</c>: 25 keys render to 942 encoded characters as an or-chain versus 438
+    /// <c>MaxQueryStringLength</c>: 25 keys render to 942 encoded characters as an or-chain versus 438
     /// natively, about 2.2× per key. An earlier estimate of "four times" undercounted the
     /// native form by ignoring that each quote encodes to <c>%27</c>. If this ratio moves, the
     /// prose has to move with it.
@@ -232,6 +232,161 @@ public class TenantVariabilityTests : TestBase
 
         Assert.DoesNotContain("$schemaversion", url!, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// S2: a schema version that reached only list queries would leave reads-by-key, writes,
+    /// the company list, raw queries and <c>$metadata</c> running under a different contract
+    /// from everything else — silently, and differently per method.
+    /// </summary>
+    [Theory]
+    [InlineData("list")]
+    [InlineData("get-by-key")]
+    [InlineData("get-by-key-with-select")]
+    [InlineData("patch")]
+    [InlineData("delete")]
+    [InlineData("companies")]
+    [InlineData("raw")]
+    [InlineData("metadata")]
+    public async Task SchemaVersion_Reaches_Every_Url_Builder(string operation)
+    {
+        var urls = new List<string>();
+
+        var client = CreateClient(
+            WithToken(req =>
+            {
+                urls.Add(req.RequestUri!.AbsoluteUri);
+                return Json("""{"value":[],"no":"X"}""");
+            }),
+            configure: o => o.SchemaVersion = "2.1");
+
+        await Invoke(client, operation);
+
+        var url = Assert.Single(urls);
+        Assert.Contains("$schemaversion=2.1", url, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("list")]
+    [InlineData("get-by-key")]
+    [InlineData("get-by-key-with-select")]
+    [InlineData("patch")]
+    [InlineData("delete")]
+    [InlineData("companies")]
+    [InlineData("raw")]
+    [InlineData("metadata")]
+    public async Task No_SchemaVersion_On_Any_Builder_When_Unset(string operation)
+    {
+        var urls = new List<string>();
+
+        var client = CreateClient(WithToken(req =>
+        {
+            urls.Add(req.RequestUri!.AbsoluteUri);
+            return Json("""{"value":[],"no":"X"}""");
+        }));
+
+        await Invoke(client, operation);
+
+        Assert.DoesNotContain("$schemaversion", Assert.Single(urls), StringComparison.Ordinal);
+    }
+
+    /// <summary>A caller who stated their own version in a raw URL keeps it.</summary>
+    [Fact]
+    public async Task Raw_Url_Keeps_A_Caller_Supplied_SchemaVersion()
+    {
+        string? url = null;
+
+        var client = CreateClient(
+            WithToken(req =>
+            {
+                url = req.RequestUri!.AbsoluteUri;
+                return Json("""{"value":[]}""");
+            }),
+            configure: o => o.SchemaVersion = "2.1");
+
+        await client.QueryRawAsync<TestRawResponse>("salesOrders?$schemaversion=2.0");
+
+        Assert.Contains("$schemaversion=2.0", url!, StringComparison.Ordinal);
+        Assert.DoesNotContain("2.1", url!, StringComparison.Ordinal);
+    }
+
+    private static async Task Invoke(
+        Dynamics365.BusinessCentral.Client.BusinessCentralClient client,
+        string operation)
+    {
+        switch (operation)
+        {
+            case "list": await client.Query<SalesOrder>().ToListAsync(); break;
+            case "get-by-key": await client.GetAsync<SalesOrder>("salesOrders", "X"); break;
+            case "get-by-key-with-select":
+                await client.GetAsync<SalesOrder>("salesOrders", "X", ["no"]); break;
+            case "patch":
+                await client.PatchAsync("salesOrders", "X", new TestEntity { Name = "N" }); break;
+            case "delete": await client.DeleteAsync("salesOrders", "X"); break;
+            case "companies": await client.GetCompaniesAsync(); break;
+            case "raw": await client.QueryRawAsync<TestRawResponse>("salesOrders?$top=1"); break;
+            default: await client.GetMetadataAsync(); break;
+        }
+    }
+
+    #endregion
+
+    #region Query-string ceiling (S4)
+
+    /// <summary>
+    /// The gateway limits the query string, not the URL. Measured across two environments: the
+    /// query-string ceiling held still at 8,099 while the full URL moved with the prefix, which
+    /// varies by environment name, company name and entity-set path. A full-URL limit is
+    /// therefore too strict on long prefixes and too loose on short ones.
+    /// </summary>
+    [Fact]
+    public async Task Guard_Measures_The_Query_String_Not_The_Prefix()
+    {
+        var observer = new TestObserver();
+
+        // Same query, wildly different prefix lengths.
+        var shortPrefix = CreateClient(WithToken(_ => Json("""{"value":[]}""")), observer,
+            o => { o.Company = "A"; o.QueryStringLengthWarningThreshold = 200; });
+
+        var longPrefix = CreateClient(WithToken(_ => Json("""{"value":[]}""")), observer,
+            o =>
+            {
+                o.Company = new string('X', 400);
+                o.QueryStringLengthWarningThreshold = 200;
+            });
+
+        await shortPrefix.Query<SalesOrder>().Where(f => f.In(x => x.No, Keys(12))).ToListAsync();
+        await longPrefix.Query<SalesOrder>().Where(f => f.In(x => x.No, Keys(12))).ToListAsync();
+
+        Assert.Equal(2, observer.UrlWarnings.Count);
+
+        // Identical query strings despite a ~400-character difference in URL length.
+        Assert.Equal(
+            observer.UrlWarnings[0].QueryStringLength,
+            observer.UrlWarnings[1].QueryStringLength);
+
+        Assert.True(
+            observer.UrlWarnings[1].UrlLength - observer.UrlWarnings[0].UrlLength > 300,
+            "expected the prefixes to differ substantially");
+    }
+
+    /// <summary>A long prefix must not consume the caller's query-string budget.</summary>
+    [Fact]
+    public async Task A_Long_Company_Name_Does_Not_Trip_The_Limit()
+    {
+        var client = CreateClient(
+            WithToken(_ => Json("""{"value":[]}""")),
+            configure: o =>
+            {
+                o.Company = new string('X', 900);
+                o.MaxQueryStringLength = 400;
+            });
+
+        // URL is ~1,000 characters; the query string is short, so this must be sent.
+        await client.Query<SalesOrder>().ToListAsync();
+    }
+
+    private static object[] Keys(int count) =>
+        [.. Enumerable.Range(0, count).Select(i => (object)$"EBH{i:D5}")];
 
     #endregion
 }

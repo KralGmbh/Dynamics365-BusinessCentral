@@ -33,12 +33,12 @@ internal sealed class BusinessCentralUrlBuilder
 
     public string BuildEntityUrl(string path)
     {
-        return Guard(EntityUrl(path));
+        return Finish(EntityUrl(path));
     }
 
     public string BuildEntityUrl(string path, string key)
     {
-        return Guard(EntityUrl(path, key));
+        return Finish(EntityUrl(path, key));
     }
 
     public string BuildEntityUrl(string path, string key, IEnumerable<string>? select)
@@ -52,7 +52,7 @@ internal sealed class BusinessCentralUrlBuilder
         if (fields is { Count: > 0 })
             url += "?$select=" + string.Join(",", fields.Select(Uri.EscapeDataString));
 
-        return Guard(url);
+        return Finish(url);
     }
 
     /// <summary>
@@ -61,7 +61,7 @@ internal sealed class BusinessCentralUrlBuilder
     /// </summary>
     public string BuildServiceRootUrl(string path)
     {
-        return Guard($"{_baseUrl}/{EncodePath(path)}");
+        return Finish($"{_baseUrl}/{EncodePath(path)}");
     }
 
     /// <summary>
@@ -71,7 +71,7 @@ internal sealed class BusinessCentralUrlBuilder
     /// company list, this lives at the service root — <c>$metadata</c> describes the whole
     /// tenant, not one company.
     /// </summary>
-    public string BuildMetadataUrl() => Guard($"{_baseUrl}/$metadata");
+    public string BuildMetadataUrl() => Finish($"{_baseUrl}/$metadata");
 
     private string EntityUrl(string path) =>
         $"{BuildCompanyBase()}/{EncodePath(path)}";
@@ -89,12 +89,12 @@ internal sealed class BusinessCentralUrlBuilder
         var split = path.IndexOf('?');
 
         if (split < 0)
-            return Guard(EntityUrl(path));
+            return Finish(EntityUrl(path));
 
         var pathPart = path[..split];
         var queryPart = path[(split + 1)..];
 
-        return Guard($"{BuildCompanyBase()}/{EncodePath(pathPart)}?{queryPart}");
+        return Finish($"{BuildCompanyBase()}/{EncodePath(pathPart)}?{queryPart}");
     }
 
     public string BuildQueryUrl(
@@ -175,32 +175,74 @@ internal sealed class BusinessCentralUrlBuilder
     }
 
     /// <summary>
-    /// Reports a URL that crossed the warning threshold and refuses one past the hard limit.
+    /// Completes any URL that did not compose its own query list: adds the schema version,
+    /// then guards the length.
     /// </summary>
     /// <remarks>
+    /// Every builder goes through here or through <see cref="BuildQueryUrl"/>. A schema version
+    /// that reached only list queries would leave reads-by-key, writes, the company list, raw
+    /// queries and <c>$metadata</c> running under a different contract from the rest of the
+    /// client — silently, and differently per method.
+    /// </remarks>
+    private string Finish(string url) => Guard(AppendSchemaVersion(url));
+
+    private string AppendSchemaVersion(string url)
+    {
+        if (_schemaVersion is null)
+            return url;
+
+        // BuildRawUrl passes a caller-owned query string through verbatim; if they already
+        // stated a version, theirs wins rather than being contradicted by a second one.
+        if (url.Contains("$schemaversion=", StringComparison.OrdinalIgnoreCase))
+            return url;
+
+        var separator = url.Contains('?', StringComparison.Ordinal) ? '&' : '?';
+
+        return $"{url}{separator}$schemaversion={Uri.EscapeDataString(_schemaVersion)}";
+    }
+
+    /// <summary>
+    /// Reports a request whose query string crossed the warning threshold and refuses one past
+    /// the hard limit.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Measures the <b>query string</b>, not the whole URL. Measured against a live SaaS
+    /// tenant, the gateway's ceiling sits at 8,099 accepted query-string characters and holds
+    /// still across environments while the full URL does not: the prefix varies with
+    /// environment name, company name (<c>Company('KRAL%20AG')</c> — spaces inflate it) and
+    /// entity-set path, so a full-URL limit is simultaneously too strict on deployments with
+    /// long prefixes and too loose on short ones. No single full-URL default is portable; a
+    /// query-string one is.
+    /// </para>
+    /// <para>
     /// Guards only URLs this builder assembled. A server-issued <c>@odata.nextLink</c> never
     /// passes through here — it is sent verbatim, and the server's own limits already applied
     /// when it produced the link.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentException">
-    /// The URL is longer than the configured <c>MaxUrlLength</c>.
+    /// The query string is longer than the configured <c>MaxQueryStringLength</c>.
     /// </exception>
     private string Guard(string url)
     {
+        var queryLength = QueryStringLength(url);
+
         // Nothing configured, or comfortably short: the overwhelming majority of calls.
-        if (_warnLength is not { } warn || url.Length < warn)
-            return _maxLength is { } onlyMax && url.Length > onlyMax
-                ? throw new ArgumentException(BuildTooLongMessage(url, onlyMax))
+        if (_warnLength is not { } warn || queryLength < warn)
+            return _maxLength is { } onlyMax && queryLength > onlyMax
+                ? throw new ArgumentException(BuildTooLongMessage(url, queryLength, onlyMax))
                 : url;
 
-        var exceedsLimit = _maxLength is { } max && url.Length > max;
+        var exceedsLimit = _maxLength is { } max && queryLength > max;
 
-        // Warn before throwing, so a deployment measuring URL lengths records the outliers
-        // that were rejected as well as the ones that were sent.
+        // Warn before throwing, so a deployment measuring lengths records the outliers that
+        // were rejected as well as the ones that were sent.
         _observer.OnUrlLengthWarning(new BusinessCentralUrlLengthInfo
         {
             Url = url,
-            Length = url.Length,
+            UrlLength = url.Length,
+            QueryStringLength = queryLength,
             Threshold = warn,
             Limit = _maxLength,
             ExceedsLimit = exceedsLimit,
@@ -208,16 +250,27 @@ internal sealed class BusinessCentralUrlBuilder
         });
 
         return exceedsLimit
-            ? throw new ArgumentException(BuildTooLongMessage(url, _maxLength!.Value))
+            ? throw new ArgumentException(BuildTooLongMessage(url, queryLength, _maxLength!.Value))
             : url;
     }
 
-    private static string BuildTooLongMessage(string url, int limit)
+    /// <summary>
+    /// Length of everything after the first <c>?</c>, or <c>0</c> when there is no query string.
+    /// </summary>
+    private static int QueryStringLength(string url)
+    {
+        var split = url.IndexOf('?', StringComparison.Ordinal);
+
+        return split < 0 ? 0 : url.Length - split - 1;
+    }
+
+    private static string BuildTooLongMessage(string url, int queryLength, int limit)
     {
         var message = new StringBuilder()
-            .Append(CultureInfo.InvariantCulture, $"This request produced a {url.Length:N0}-character URL; the configured limit ")
-            .Append(CultureInfo.InvariantCulture, $"(BusinessCentralOptions.MaxUrlLength) is {limit:N0}. Business Central will ")
-            .Append("reject it before it reaches the entity set, with a 400 or 404 that does not mention length.");
+            .Append(CultureInfo.InvariantCulture, $"This request produced a {queryLength:N0}-character query string ")
+            .Append(CultureInfo.InvariantCulture, $"(in a {url.Length:N0}-character URL); the configured limit ")
+            .Append(CultureInfo.InvariantCulture, $"(BusinessCentralOptions.MaxQueryStringLength) is {limit:N0}. Business Central's ")
+            .Append("gateway answers 414 URI Too Long past its own ceiling, before the request reaches the entity set.");
 
         var orClauses = CountOrClauses(url);
 

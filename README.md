@@ -339,38 +339,43 @@ var filter = Filter.In<Item>(i => i.No, keys, ODataInStyle.Native);
 > text field therefore matches empty strings, and `Filter.IsNotNull` *excludes* them —
 > unlike the equivalent LINQ predicate. Verified against a live tenant.
 
-## URL length and bulk key lookups
+## Query-string length and bulk key lookups
 
-Because `Filter.In` defaults to an `or`-chain, a bulk key lookup grows the URL about **twice
-as fast** as the `in (...)` form: `(no eq 'EBH100') or ` costs 38 encoded characters per key
-where `'EBH100',` costs 17. Past the server's limit Business Central answers with a `400` or
-`404` that never mentions length. (On schema version 2.1 you can halve this — see
-`ODataInStyle.Native` above.)
-
-The client measures and guards:
+Business Central's gateway limits the **query string**, not the whole URL. Measured against a
+live SaaS tenant across two environments: the ceiling sits at **8,099** accepted query-string
+characters and holds still, while the full URL moves with environment name, company name and
+entity-set path. Past it the server answers `414 URI Too Long`.
 
 ```csharp
 services.AddBusinessCentral(o =>
 {
-    o.UrlLengthWarningThreshold = 2000;  // default — raises OnUrlLengthWarning
-    o.MaxUrlLength              = 4000;  // default — throws ArgumentException
+    o.QueryStringLengthWarningThreshold = 6000;  // default — raises OnUrlLengthWarning
+    o.MaxQueryStringLength              = 8000;  // default — throws ArgumentException
 });
 ```
 
-A URL between the two is **sent normally** and reported to your observer, so a deployment
-can discover the length distribution its real workload produces and size chunking against
-evidence. Past `MaxUrlLength` the client throws before the request leaves the process, with
-a message naming the actual length, the limit, and the `or`-chain count when one is
-present. Set either to `null` to disable it.
+A request between the two is **sent normally** and reported to your observer, so a deployment
+can discover the length distribution its real workload produces. Past `MaxQueryStringLength`
+the client throws before the request leaves the process, naming the query-string length, the
+limit, and the `or`-clause count when one is present.
+
+The value here is pre-flight diagnosis, not decoding an opaque server error — `414` already
+says what happened. What it does not say is *which* filter, how many `or` clauses, or that
+`Filter.In` is the likely cause. Set either option to `null` to disable it.
 
 Server-issued `@odata.nextLink` continuations are never checked — the server produced them,
 so its own limits already applied.
 
 ```csharp
 public void OnUrlLengthWarning(BusinessCentralUrlLengthInfo url) =>
-    _logger.LogWarning("BC URL {Length} chars ({OrClauses} or-clauses), limit {Limit}",
-        url.Length, url.OrClauseCount, url.Limit);
+    _logger.LogWarning("BC query string {Length} chars ({OrClauses} or-clauses), limit {Limit}",
+        url.QueryStringLength, url.OrClauseCount, url.Limit);
 ```
+
+> **The cheapest fix is usually schema version 2.1.** For 25 eight-character keys the encoded
+> `$filter` is 942 characters as an `or`-chain against 438 natively — and `&$schemaversion=2.1`
+> costs 19, so it recovers essentially the whole difference and roughly doubles the keys that
+> fit in one request. See [Filters](#-filters).
 
 ## Field names without the builder
 

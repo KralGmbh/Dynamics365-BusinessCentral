@@ -16,26 +16,39 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
 
 ### Added
 
-- **`BusinessCentralOptions.MaxUrlLength`** (default `4000`) and
-  **`UrlLengthWarningThreshold`** (default `2000`). A built URL past the threshold raises the
-  new `IBusinessCentralObserver.OnUrlLengthWarning` and is **still sent**; a URL past the
-  limit throws an `ArgumentException` before the request leaves the process, naming the
-  actual length, the limit and — when the filter is an `or`-chain — the clause count and
-  `Filter.In` as the likely cause. Either setting may be `null` to disable it.
+- **`BusinessCentralOptions.MaxQueryStringLength`** (default `8000`) and
+  **`QueryStringLengthWarningThreshold`** (default `6000`). A request whose query string
+  passes the threshold raises the new `IBusinessCentralObserver.OnUrlLengthWarning` and is
+  **still sent**; one past the limit throws an `ArgumentException` before the request leaves
+  the process, naming the length, the limit and — when the filter is an `or`-chain — the
+  clause count and `Filter.In` as the likely cause. Either setting may be `null` to disable it.
+
+  **The query string, not the whole URL**, because that is what Business Central's gateway
+  limits — measured at **8,099** accepted characters, invariant across two environments whose
+  full URLs differed by the length of their prefixes. The prefix moves with environment name,
+  company name (`Company('KRAL%20AG')`, where the escaped space inflates it) and entity-set
+  path, so a full-URL limit is simultaneously too strict on deployments with long prefixes
+  and too loose on short ones. Both defaults are set from that measurement rather than
+  reasoned from IIS limits, with headroom under the ceiling rather than sitting on it.
 
   The gap between the two is deliberate. A hard threshold alone would turn queries Business
   Central currently accepts into client-side exceptions on upgrade; the warning band instead
   lets a deployment measure the length distribution its real workload produces and size
-  chunking against evidence. This matters because `Filter.In` renders an `or`-chain (BC
-  gates the OData `in` operator on schema version 2.1), which costs about twice per key what `in (...)`
-  would — so bulk lookups approach the limit far sooner than the value count suggests.
+  chunking against evidence.
+
+  Past its own ceiling the server answers `414 URI Too Long` — not the opaque `400`/`404`
+  earlier drafts of this entry claimed. The guard's value is therefore pre-flight diagnosis
+  (which filter, how many `or` clauses, and that `Filter.In` is the likely cause), not
+  decoding an unhelpful status.
 
   Server-issued `@odata.nextLink` continuations are never checked: the server produced them,
   so its own limits already applied.
 
 - **`IBusinessCentralObserver.OnUrlLengthWarning`** with `BusinessCentralUrlLengthInfo`
-  (`Url`, `Length`, `Threshold`, `Limit`, `ExceedsLimit`, `OrClauseCount`). A default
-  interface method, so existing observers keep compiling.
+  (`Url`, `UrlLength`, `QueryStringLength`, `Threshold`, `Limit`, `ExceedsLimit`,
+  `OrClauseCount`). A default interface method, so existing observers keep compiling.
+  `QueryStringLength` is the measured quantity; `UrlLength` is kept alongside it because the
+  difference between them is exactly what makes a full-URL limit unportable.
 
 - **`BusinessCentralMetadata` in the Testing package (M4): the derived-`$select` hazard is now
   checkable in CI**, not just documented.
@@ -98,17 +111,22 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
     instead of the `or`-chain. They are a pair, and both are needed.
 
     Microsoft documents the `in` operator as working
-    [only in `$schemaversion=2.1`](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-filter-expressions-in-odata-uris);
-    below that, Business Central answers `BadRequest_MethodNotImplemented`, which is what a
-    live tenant did and why the `or`-chain remains the default. But an endpoint that *is* on
+    [only in `$schemaversion=2.1`](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-filter-expressions-in-odata-uris),
+    and that is now confirmed live: the same query returns `501` without the parameter and
+    `200` with it, with **byte-identical** response bodies to the `or`-chain control, across
+    five entity sets spanning three kinds of published object. `$schemaversion=2.0` still
+    returns `501`, so it is specifically 2.1. The `or`-chain remains the default because it
+    works on every schema version. But an endpoint that *is* on
     2.1 was previously stuck paying about twice the encoded URL length per key for a
     workaround it does not need, with no way to opt out — and no way to request the schema
     version even if there had been. Schema version 2.1 also enables nested function calls
     such as `contains(tolower(field), 'x')`, which earlier versions answer with an error or
     an undefined result.
-  - **`MaxUrlLength`'s documentation now says the `4000` default is an estimate, not a
-    measurement** — reasoned from IIS limits rather than observed, unlike every other default
-    in the package. `UrlLengthWarningThreshold` exists to replace it with evidence.
+  - **`BusinessCentralOptions.SchemaVersion` reaches every URL builder**, not only list
+    queries. As first shipped it was emitted by one of six, so a consumer setting `"2.1"` read
+    lists under one contract and did reads-by-key, writes, the company list, raw queries and
+    `$metadata` under another — silently, and differently per method. A caller-supplied
+    `$schemaversion` in a raw URL still wins.
 
 ### Fixed
 

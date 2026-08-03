@@ -33,7 +33,7 @@ public sealed class TestObserver : IBusinessCentralObserver
 
     public void OnUrlLengthWarning(BusinessCentralUrlLengthInfo info)
     {
-        Events.Add($"url-length:{info.Length}");
+        Events.Add($"url-length:{info.QueryStringLength}");
         UrlWarnings.Add(info);
     }
 
