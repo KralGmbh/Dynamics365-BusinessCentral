@@ -159,23 +159,31 @@ about deserialization — **the request can now fail before deserialization is r
 Nothing in the package can consult your tenant's schema, so every derived name is validated
 by the server, and a name it does not recognise fails the whole query with a `400`.
 
-**Two ways an upgrade can break, and they are not equally your fault:**
+**One way an upgrade can break:** a property that maps to **no Business Central column at
+all**. It used to bind as its default and cost nothing; it now enters `$select` and draws a
+`400` naming the field. This is breakage this release creates, not latent drift it
+surfaces. Say a base class contributes `SystemCreatedAt`/`SystemModifiedAt` to a dozen
+entities and only some published pages expose those columns: nothing in the model says so,
+and today those queries work. After upgrading they `400`. An inherited base class of system
+fields is the exact shape to check.
 
-| Cause | Was it broken before? | What you see |
-| ----- | --------------------- | ------------ |
-| `[JsonPropertyName]` casing drifts from `$metadata` | Yes — the property silently never bound | `400` naming the field |
-| A property maps to **no Business Central column at all** | No — it bound as its default and cost nothing | `400` naming the field |
+> **Casing is not a second cause.** Releases up to `2.0.0-alpha.7` warned here that
+> `$select` is case-sensitive server-side and that a drifted `[JsonPropertyName]` would
+> start failing. **That was measured false.** Against a live Business Central SaaS
+> production tenant, `entry_No`, `Entry_No` and `ENTRY_NO` all returned `200` on the same
+> entity set, and the server answers in its own canonical casing regardless of what was
+> requested. One consumer had 16 drifted wire names across 5 entity types in production for
+> months without a single failure. Casing drift needs no action. (Business Central
+> on-premises runs a different OData stack and was not measured, so this is "not
+> case-sensitive where measured", not a guarantee.)
 
-The second row is **breakage this release creates**, not latent drift it surfaces. Say a
-base class contributes `SystemCreatedAt`/`SystemModifiedAt` to a dozen entities and only
-some of the published pages expose those columns: nothing in the model says so, and today
-those queries work. After upgrading they `400`. An inherited base class of system fields is
-the exact shape to check.
-
-**Do this once, before you rely on it:** issue one authenticated `GET` per entity set
-against `$metadata` and compare the column names offline against your `[JsonPropertyName]`
-values. It closes both rows above for every type at once, with no production risk, and it
-is much cheaper than meeting them one `400` at a time.
+**Do this once, before you rely on it:** fetch `$metadata` and compare the column names
+offline against the properties on your entity classes. It finds every non-column for every
+type at once, with no production risk, and it is much cheaper than meeting them one `400`
+at a time. Field result from the one production codebase this was run against: 13 entity
+types, 118 derived columns, **zero** missing — including the inherited `SystemId` /
+`SystemCreatedAt` / `SystemModifiedAt` shape above, which existed on all five custom
+published pages. The risk is real but it did not materialise there.
 
 **Remedies**, both already present: `[JsonIgnore]` on a property drops it from the
 projection permanently; `.SelectAll()` on a query sends no `$select` at all. Since

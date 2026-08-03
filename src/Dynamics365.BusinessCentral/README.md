@@ -117,16 +117,19 @@ projection once; call sites stop restating it. An explicit `.Select(...)` narrow
 `.SelectAll()` requests every column. Navigation properties and get-only computed
 properties are excluded automatically.
 
-> **A property with no matching column now fails the query.** Nothing in the package can
-> consult your tenant's schema, so every derived name is discovered by the server. A
-> property that maps to no column on the entity set used to bind as its default and cost
-> nothing; it now enters `$select` and the whole request fails with a `400` before a row is
-> read. The same applies to casing, since `$select` is **case-sensitive** on the server
-> even though deserialization is not. Remedy either with `[JsonIgnore]` on the property or
-> `.SelectAll()` on the query — the exception message names both. Watch for a shared base
-> class of system fields inherited by entity sets that do not all expose them. Verifying
-> your wire names against `$metadata` once, when adopting this, is cheaper than meeting
-> them one `400` at a time.
+> **A property with no matching column fails the query.** Nothing in the package can consult
+> your tenant's schema, so every derived name is validated by the server. A property that
+> maps to no column on the entity set used to bind as its default and cost nothing; it now
+> enters `$select` and the whole request fails with a `400` naming the field. Remedy with
+> `[JsonIgnore]` on the property or `.SelectAll()` on the query — the exception message
+> names both. Watch for a shared base class of system fields inherited by entity sets that
+> do not all expose them, and probe `$metadata` once when adopting this to catch every such
+> property at once.
+>
+> **Casing is not a problem.** `$select` was measured **case-insensitive** on Business
+> Central SaaS — three spellings of one column all returned `200`, and the server answers in
+> its own canonical casing regardless of what was requested. A `[JsonPropertyName]` whose
+> casing disagrees with `$metadata` needs no action. (Not measured on-premises.)
 
 | Operation | Method |
 | --------- | ------ |

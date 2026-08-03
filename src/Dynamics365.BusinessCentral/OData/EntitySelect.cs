@@ -30,26 +30,29 @@ namespace Dynamics365.BusinessCentral.OData;
 /// deterministic.
 /// </para>
 /// <para>
-/// <b>Two ways this can fail a query that previously succeeded.</b> The inclusion rules
-/// above are the type's view of itself; nothing here can consult the tenant, so a name that
-/// is not a real column on the entity set is only discovered by the server rejecting it:
+/// <b>One way this can fail a query that previously succeeded.</b> The inclusion rules above
+/// are the type's view of itself; nothing here can consult the tenant, so a property that
+/// maps to <b>no Business Central column at all</b> is only discovered by the server
+/// rejecting it. Such a property used to bind as its default and cost nothing; it now enters
+/// <c>$select</c> and fails the whole request with a <c>400</c> before any row is read. This
+/// is newly created breakage, and saying otherwise would be wrong. The shape to watch for is
+/// an inherited base class of system fields applied to entity sets that do not all expose
+/// them.
 /// </para>
-/// <list type="bullet">
-/// <item><b>Casing drift</b> — <c>$select</c> is case-<b>sensitive</b> on the server even
-/// though deserialization is not, so a <c>[JsonPropertyName]</c> that disagrees with
-/// <c>$metadata</c> only in case bound fine before and fails now. This is latent drift being
-/// surfaced, not created: the property was never actually receiving data.</item>
-/// <item><b>A property with no matching column at all</b> — this one <i>is</i> newly created
-/// breakage, and saying otherwise would be wrong. Such a property used to bind as its default
-/// and cost nothing; it now enters <c>$select</c> and fails the whole request with a
-/// <c>400</c> before any row is read. The shape to watch for is an inherited base class of
-/// system fields applied to entity sets that do not all expose them.</item>
-/// </list>
 /// <para>
-/// Either way the remedy is per-property <c>[JsonIgnore]</c> or a query-level
-/// <c>SelectAll()</c>, and <see cref="DerivedSelectHint"/> puts both into the exception
-/// message so the failure explains itself. Verifying wire names against <c>$metadata</c>
-/// once, when adopting this, is cheaper than meeting them one <c>400</c> at a time.
+/// The remedy is per-property <c>[JsonIgnore]</c> or a query-level <c>SelectAll()</c>, and
+/// <see cref="DerivedSelectHint"/> puts both into the exception message so the failure
+/// explains itself. Probing <c>$metadata</c> once, when adopting this, catches every such
+/// property at once instead of one <c>400</c> at a time.
+/// </para>
+/// <para>
+/// <b>Casing is not a second cause.</b> Earlier releases documented <c>$select</c> as
+/// case-sensitive server-side; measurement against a live Business Central SaaS tenant showed
+/// otherwise — three spellings of one column all returned <c>200</c>, and the server answers
+/// in its own canonical casing regardless of what was requested. A <c>[JsonPropertyName]</c>
+/// whose casing disagrees with <c>$metadata</c> is therefore harmless here. The on-premises
+/// OData stack is a different deployment and was not measured, so this is stated as "not
+/// case-sensitive where measured", not as a guarantee.
 /// </para>
 /// </remarks>
 internal static class EntitySelect

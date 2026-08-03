@@ -49,15 +49,45 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
 
 ### Documentation
 
+- **`$select` is case-*insensitive* on Business Central SaaS — the opposite of what alpha.6
+  documented.** Measured against a live production tenant
+  ([METADATA-PROBE-FINDINGS-BASTION.md](METADATA-PROBE-FINDINGS-BASTION.md)): `entry_No`,
+  `Entry_No` and `ENTRY_NO` all return `200` on the same entity set, and the server answers
+  in its own canonical casing regardless of what was requested. One consumer had 16 drifted
+  wire names across 5 entity types running in production for months without a failure.
+
+  Every shipped string asserting case-sensitivity is gone — the exception hint, the
+  `EntitySelect` XML docs, MIGRATION and both READMEs. This mattered most in the hint, where
+  the claim would have misdirected *every* real occurrence toward a cause that cannot
+  produce the error, while the server's own message already gave the right answer. A test
+  now pins the hint against the wording returning. Business Central on-premises runs a
+  different OData stack and was not measured, so nothing now claims case-in*sensitivity*
+  either; the honest position is that the package does not know.
+
 - **Corrected an alpha.6 claim.** The derived-`$select` documentation said the feature
-  surfaces latent drift rather than creating breakage. That is true for **casing** drift —
-  such a property was never receiving data — but false for a property that maps to **no
-  Business Central column at all**: that used to bind as its default and cost nothing, and
-  now fails the whole request with a `400` before deserialization is ever reached. MIGRATION
-  and both READMEs now name this as breakage, with the shape to watch for (a shared base
-  class of system fields inherited by entity sets that do not all expose them).
+  surfaces latent drift rather than creating breakage. With casing eliminated above, there
+  is exactly **one** cause and it is the created kind: a property that maps to no Business
+  Central column at all used to bind as its default and cost nothing, and now fails the whole
+  request with a `400` before deserialization is ever reached. MIGRATION and both READMEs
+  name it as breakage, with the shape to watch for (a shared base class of system fields
+  inherited by entity sets that do not all expose them).
+
+  Field evidence that the risk is narrow: probed across 13 entity types / 118 derived
+  columns in one production codebase, **zero** missing columns — including that exact
+  inherited-system-fields shape, which existed on all five custom published pages.
+
 - README: a *"URL length and bulk key lookups"* section covering both settings, the observer
   callback and the `or`-chain arithmetic.
+
+### Deferred to 2.1
+
+- **A `$metadata` projection validator in the Testing package** (M4), shaped as
+  `BusinessCentralMetadata.AssertProjectionsResolve(client, assembly)`: check every
+  `[BusinessCentralEntity]` type's derived `$select` against live `$metadata` and report all
+  offending names at once. It would turn the MIGRATION checklist item above into one CI
+  assertion — worth doing because the failure it guards is introduced by *adding a property*,
+  an edit nobody associates with a query breaking. Held back because it needs a live tenant
+  and a real token, making it an integration helper whose design should not gate 2.0.
 
 ## [2.0.0-alpha.6] - 2026-07-30
 
@@ -89,6 +119,10 @@ consumer's fluent-builder migration.
   working — but note `$select` is case-sensitive server-side: latent `[JsonPropertyName]`
   casing drift that deserialization tolerated now fails loudly. Path-based `QueryAsync` is
   unchanged.
+
+  > **Superseded.** The case-sensitivity claim above was measured **false** against a live
+  > Business Central SaaS tenant and is corrected in `2.0.0-alpha.7`. Kept here as the
+  > historical record of what alpha.6 shipped; do not act on it.
 
 ### Documentation
 

@@ -36,10 +36,15 @@ public class DerivedSelectDiagnosticsTests : TestBase
         public string Description { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// Shaped after a real Business Central SaaS response: the server quotes the name it was
+    /// sent, verbatim, and never substitutes its own canonical casing. Our derived wire name
+    /// for <c>SystemCreatedAt</c> is <c>systemCreatedAt</c>, so that is what comes back.
+    /// </summary>
     private const string MissingColumnBody =
         """
         {"error":{"code":"BadRequest_NotFound",
-         "message":"Could not find a property named 'SystemCreatedAt' on type 'NAV.ldatSummary'."}}
+         "message":"Could not find a property named 'systemCreatedAt' on type 'NAV.LdatSummary'."}}
         """;
 
     private static Func<HttpRequestMessage, HttpResponseMessage> BadRequest(string body) =>
@@ -58,7 +63,7 @@ public class DerivedSelectDiagnosticsTests : TestBase
         var ex = await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
             client.Query<LdatSummary>("ldatSummaries").ToListAsync());
 
-        Assert.Contains("SystemCreatedAt", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("systemCreatedAt", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -86,18 +91,43 @@ public class DerivedSelectDiagnosticsTests : TestBase
     }
 
     /// <summary>
-    /// The other failure mode: casing that deserialization tolerates and <c>$select</c> does
-    /// not. The hint has to cover it, because the property name looks correct on inspection.
+    /// Regression guard for M1 (`METADATA-PROBE-FINDINGS-BASTION.md`). Alpha.6 and alpha.7
+    /// both claimed <c>$select</c> was case-sensitive server-side; live-tenant measurement
+    /// showed the opposite — three spellings of one column all returned <c>200</c>, and
+    /// Business Central answers in its own canonical casing regardless of what was requested.
     /// </summary>
-    [Fact]
-    public async Task Hint_Mentions_Case_Sensitivity()
+    /// <remarks>
+    /// Since casing drift cannot produce this <c>400</c>, a hint naming it would misdirect
+    /// every real occurrence away from the cause the server's own message already states —
+    /// strictly worse than saying nothing. This wording has drifted back twice, hence a test
+    /// rather than a comment.
+    /// </remarks>
+    [Theory]
+    [InlineData("case-sensitive")]
+    [InlineData("case sensitive")]
+    [InlineData("casing")]
+    [InlineData("JsonPropertyName")]
+    public async Task Hint_Makes_No_Case_Sensitivity_Claim(string forbidden)
     {
         var client = CreateClient(BadRequest(MissingColumnBody));
 
         var ex = await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
             client.Query<LdatSummary>("ldatSummaries").ToListAsync());
 
-        Assert.Contains("case-sensitive", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(forbidden, ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The hint names one cause and stops.</summary>
+    [Fact]
+    public async Task Hint_Names_Exactly_One_Cause()
+    {
+        var client = CreateClient(BadRequest(MissingColumnBody));
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
+            client.Query<LdatSummary>("ldatSummaries").ToListAsync());
+
+        Assert.Contains("does not expose that column", ex.Message, StringComparison.Ordinal);
+        Assert.EndsWith("(GET → HTTP 400 BadRequest)", ex.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -220,7 +250,7 @@ public class DerivedSelectDiagnosticsTests : TestBase
         Assert.Equal("GET", ex.Method);
         Assert.Equal("BadRequest_NotFound", ex.ODataErrorCode);
         Assert.Contains("ldatSummaries", ex.RequestUrl!, StringComparison.Ordinal);
-        Assert.Contains("SystemCreatedAt", ex.ResponseBody!, StringComparison.Ordinal);
+        Assert.Contains("systemCreatedAt", ex.ResponseBody!, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -21,6 +21,13 @@ namespace Dynamics365.BusinessCentral.OData;
 /// projection caused it (a malformed <c>$filter</c> produces one too), so the text suggests
 /// rather than asserts.
 /// </para>
+/// <para>
+/// It names exactly one cause — a property that is not a column — because that is the only
+/// one measured to produce this error. Do not add a casing explanation: <c>$select</c> was
+/// measured case-<b>insensitive</b> on Business Central SaaS, so casing drift cannot be the
+/// cause, and a hint naming it would misdirect every real occurrence away from the answer the
+/// server already supplied. See <see cref="EntitySelect"/>.
+/// </para>
 /// </remarks>
 internal static class DerivedSelectHint
 {
@@ -63,12 +70,15 @@ internal static class DerivedSelectHint
             ? "; if Business Central does not expose one of them as a column on this entity set, "
             : string.Create(CultureInfo.InvariantCulture, $", one of which is '{named}'; if Business Central does not expose that column on this entity set, ");
 
+        // Deliberately names one cause and stops. An earlier version added a sentence about
+        // $select being case-sensitive server-side; measurement against a live SaaS tenant
+        // showed it is not (three spellings of one column all returned 200), so the sentence
+        // pointed every real occurrence at a cause that cannot produce this error — worse
+        // than no hint, since the server's own message already gives the right answer.
         return opening +
                subject +
                "mark the property [JsonIgnore] to drop it from the projection, or call SelectAll() " +
-               "to send no $select at all. Note that $select is case-sensitive server-side even " +
-               "though deserialization is not, so a [JsonPropertyName] whose casing drifts from " +
-               "$metadata fails here while still deserializing correctly.";
+               "to send no $select at all.";
     }
 
     /// <summary>
