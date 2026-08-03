@@ -376,3 +376,11 @@ Dynamics365.BusinessCentral.SmokeTest/.DS_Store
 *-REVIEW-*.md
 *-REQUESTS-*.md
 *-SUMMARY-FOR-*.md
+
+# Local credential material. NEVER commit.
+# A client secret lived here untracked on 2026-08-03 and would have been swept up
+# by `git add -A`. Ignore the whole directory, not individual files.
+.env/
+*.env
+!src/**/*.env
+dev-tenant.md
