@@ -31,7 +31,7 @@ dotnet test -f net10.0 --filter "FullyQualifiedName~ObserverTests"
 dotnet pack -c Release          # packs BOTH packages (main + Testing), .nupkg + .snupkg each
 ```
 
-CI: `.github/workflows/sonar.yml` builds + tests on net8.0 and runs SonarCloud on every push/PR to `master`. `.github/workflows/nuget.yml` packs and pushes to NuGet on published GitHub releases — bump `<Version>` in the csproj before tagging.
+CI: `.github/workflows/sonar.yml` builds + tests **all three TFMs** and runs SonarCloud on every push/PR to `master`. Both workflows install the 8.0.x/9.0.x/10.0.x runtimes via `setup-dotnet` — the 10.0.x SDK can *build* net8.0/net9.0 from NuGet targeting packs, but their test hosts need the matching runtimes, and depending on the runner image to preinstall them is what previously left net9.0 executed nowhere. Don't reintroduce `-f net8.0` on the gate; it belongs only on the Sonar coverage run, where a second and third pass over the same sources would not move the number. `.github/workflows/nuget.yml` **tests before it packs** and pushes on published GitHub releases — a release is cut from a tag, which need not be the commit CI last saw. Bump `<Version>` in both csprojs before tagging.
 
 ## Architecture
 

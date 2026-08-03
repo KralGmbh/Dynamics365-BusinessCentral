@@ -89,8 +89,11 @@ internal static class DerivedSelectHint
     /// like <c>id</c> from matching inside <c>systemId</c>.
     /// </summary>
     /// <remarks>
-    /// Matching ignores case on purpose: when the cause is casing drift, the name in the
-    /// message is the one that was sent, and it must still be recognised as ours.
+    /// An ordinal match would in fact be sufficient against Business Central SaaS, which was
+    /// measured to echo the requested name back verbatim rather than substituting its own
+    /// canonical casing. Matching ignores case anyway, purely as insurance against a
+    /// deployment that does substitute: the cost of being wrong is a hint that says "one of
+    /// them" instead of naming the field, and that is a better failure than silence.
     /// </remarks>
     private static string? FindImplicatedField(BusinessCentralValidationException ex, string[] derived)
     {
