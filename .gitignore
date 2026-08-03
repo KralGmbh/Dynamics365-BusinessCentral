@@ -371,7 +371,8 @@ Dynamics365.BusinessCentral.SmokeTest/.DS_Store
 # is published; those documents are not. Working copies live outside the repo in
 # ../Dynamics365-BusinessCentral-consumer-feedback/.
 # Removed from all history on 2026-08-03; these patterns stop `git add -A` re-adding them.
-*BASTION*.md
 *-FINDINGS-*.md
 *-FEEDBACK-*.md
-*-FOR-BASTION.md
+*-REVIEW-*.md
+*-REQUESTS-*.md
+*-SUMMARY-FOR-*.md

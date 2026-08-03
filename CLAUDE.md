@@ -138,7 +138,7 @@ Pattern: `TestBase.CreateClient(handler, observer?, configure?)` builds a real `
 
 Most of 2.0's design was driven by rounds of feedback from a production consumer. **Those documents are confidential and live outside this repository**, in `../Dynamics365-BusinessCentral-consumer-feedback/`. They contain a Business Central tenant ID, live correlation IDs, environment and company names, the internal entity-set inventory and the consumer's application architecture.
 
-They were committed here by mistake and purged from all git history on 2026-08-03. `.gitignore` now blocks `*BASTION*.md`, `*-FINDINGS-*.md` and `*-FEEDBACK-*.md` so a reflexive `git add -A` cannot re-add them — don't weaken those patterns.
+They were committed here by mistake and purged from all git history on 2026-08-03. `.gitignore` now blocks them by filename shape (`*-FINDINGS-*.md`, `*-FEEDBACK-*.md`, `*-REVIEW-*.md`, `*-REQUESTS-*.md`, `*-SUMMARY-FOR-*.md`) so a reflexive `git add -A` cannot re-add them — don't weaken those patterns.
 
 In `CHANGELOG.md`, commit messages and code comments, cite findings **by round and ID** ("the `$metadata` probe round", "M1", "S4", "the live-tenant round") and never by filename or customer name. The IDs are stable and meaningful; the filenames leak who reported them.
 

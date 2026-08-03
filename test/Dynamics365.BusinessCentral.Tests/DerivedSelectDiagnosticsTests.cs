@@ -91,7 +91,7 @@ public class DerivedSelectDiagnosticsTests : TestBase
     }
 
     /// <summary>
-    /// Regression guard for M1 (`METADATA-PROBE-FINDINGS-BASTION.md`). Alpha.6 and alpha.7
+    /// Regression guard for M1 (the $metadata probe round). Alpha.6 and alpha.7
     /// both claimed <c>$select</c> was case-sensitive server-side; live-tenant measurement
     /// showed the opposite — three spellings of one column all returned <c>200</c>, and
     /// Business Central answers in its own canonical casing regardless of what was requested.
