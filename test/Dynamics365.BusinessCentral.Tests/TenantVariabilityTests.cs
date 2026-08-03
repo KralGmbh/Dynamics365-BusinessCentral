@@ -544,4 +544,31 @@ public class TenantVariabilityTests : TestBase
     }
 
     #endregion
+
+    /// <summary>
+    /// The MIGRATION snippet for the <c>Value</c>/wire divergence, run rather than typed out.
+    /// If this stops compiling or passing, that document is wrong.
+    /// </summary>
+    [Fact]
+    public async Task Migration_Example_For_Asserting_On_The_Request_Works()
+    {
+        var filter = Filter.In<SalesOrder>(i => i.No, ["A", "B"]);
+
+        // Value is always the portable form, whatever the client is configured for.
+        Assert.Equal("(no eq 'A') or (no eq 'B')", filter.Value);
+
+        using var bc = new Dynamics365.BusinessCentral.Testing.FakeBusinessCentral(
+            o => o.SchemaVersion = "2.1");
+
+        bc.EnqueuePage<SalesOrder>();
+
+        await bc.Client.Query<SalesOrder>()
+            .Where(f => f.In(i => i.No, ["A", "B"]))
+            .ToListAsync();
+
+        Assert.Contains(
+            "no in ('A','B')",
+            bc.Requests.Single().DecodedPathAndQuery,
+            StringComparison.Ordinal);
+    }
 }

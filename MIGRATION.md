@@ -209,6 +209,43 @@ projection permanently; `.SelectAll()` on a query sends no `$select` at all. Sin
 property, and points at both — you should not have to reason this out from a bare server
 message.
 
+### `ODataFilter.Value` can differ from what goes on the wire
+
+New in `2.0.0-alpha.7`, and only when `SchemaVersion` is `2.1` or later.
+
+`Filter.In` defaults to `ODataInStyle.Auto`, whose rendering is decided by the client when it
+builds the request URL — that is what lets one setting switch every membership filter to the
+native `in` operator. A bare `ODataFilter` has no endpoint to ask, so `Value` and `ToString()`
+always give you the portable `or`-chain:
+
+```csharp
+services.AddBusinessCentral(o => o.SchemaVersion = "2.1");
+
+var filter = Filter.In<Item>(i => i.No, ["A", "B"]);
+
+filter.Value;   // "(no eq 'A') or (no eq 'B')"   — always
+// the request actually sent:  ?$filter=no in ('A','B')&$schemaversion=2.1
+```
+
+**If you have tests asserting on `Value` or `ToString()`, they now verify something the wire
+may not do.** They will not fail — which is the problem. This is the same failure mode as the
+`in`-operator finding that produced this feature: a test that passes against a fake while the
+tenant rejects the real request.
+
+Assert on the request instead. `FakeBusinessCentral` records what was actually sent:
+
+```csharp
+using var bc = new FakeBusinessCentral(o => o.SchemaVersion = "2.1");
+bc.EnqueuePage<Item>();
+
+await bc.Client.Query<Item>().Where(f => f.In(i => i.No, ["A", "B"])).ToListAsync();
+
+Assert.Contains("no in ('A','B')", bc.Requests.Single().DecodedPathAndQuery);
+```
+
+Nothing changes if you do not set `SchemaVersion`, or if you pin a rendering with
+`ODataInStyle.OrChain` / `.Native` — in those cases `Value` and the wire agree.
+
 ### A long `$filter` is now refused client-side instead of failing opaquely
 
 New in `2.0.0-alpha.7`. `BusinessCentralOptions.MaxQueryStringLength` defaults to `8000`
@@ -223,12 +260,23 @@ environments whose full URLs differed. Past the server's own ceiling you get
 message names the length, the limit, the `or`-clause count and `Filter.In` as the likely
 cause.
 
-This only bites bulk key lookups, and mainly through `Filter.In`: it defaults to an
+This only bites bulk key lookups, and mainly through `Filter.In`: it falls back to an
 `or`-chain because Business Central gates the OData `in` operator on schema version 2.1, and
-each encoded `(no eq 'EBH100') or ` costs 38 characters against 17 for the `'EBH100',` it
-replaces. The cheapest fix is usually to stop paying for the workaround — set
-`SchemaVersion = "2.1"` and pass `ODataInStyle.Native`, verified working against a live
-tenant.
+each encoded `(no eq 'EBH00000') or ` costs 38 characters against 17 for the `'EBH00000',` it
+replaces.
+
+**The cheapest fix is usually to stop paying for the workaround.** If your endpoint serves
+schema version 2.1, one setting halves it:
+
+```csharp
+services.AddBusinessCentral(o => o.SchemaVersion = "2.1");
+```
+
+That is all. `Filter.In` defaults to `ODataInStyle.Auto`, which reads the configured schema
+version at request-build time — no call-site changes. Do **not** also pass
+`ODataInStyle.Native`: pinning the rendering means that if the schema version is ever removed
+or lowered the filters keep emitting `in` and start returning `501`, which is exactly what
+`Auto` exists to prevent.
 
 If you have a working query above `8000` characters of query string, raise
 `MaxQueryStringLength` or set it to `null`. Server-issued `@odata.nextLink` continuations are

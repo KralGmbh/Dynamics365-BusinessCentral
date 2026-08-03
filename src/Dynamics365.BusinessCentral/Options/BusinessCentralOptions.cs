@@ -197,8 +197,8 @@ public sealed class BusinessCentralOptions
     /// <para>
     /// The usual cause is a bulk key lookup. <c>Filter.In</c> renders a same-field
     /// <c>or</c>-chain by default because Business Central gates the OData <c>in</c> operator on
-    /// schema version 2.1, and <c>(no eq 'EBH100') or </c> encodes to 38 characters per key
-    /// against 17 for <c>'EBH100',</c>. Setting <see cref="SchemaVersion"/> to <c>"2.1"</c> and
+    /// schema version 2.1, and <c>(no eq 'EBH00000') or </c> encodes to 38 characters per key
+    /// against 17 for <c>'EBH00000',</c>. Setting <see cref="SchemaVersion"/> to <c>"2.1"</c> and
     /// passing <see cref="OData.ODataInStyle.Native"/> recovers essentially all of that.
     /// </para>
     /// <para>

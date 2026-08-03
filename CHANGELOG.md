@@ -122,8 +122,13 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
     The rendering is resolved **when the request URL is built**, not when the filter is
     constructed — which is what makes it useful, since a chunked key lookup is almost always
     `.And(...)`-ed with something else and freezing the choice at construction would mean the
-    automatic form never applied where it mattered. `ODataFilter.Value` still yields the
-    `or`-chain: a bare value has no endpoint to ask.
+    automatic form never applied where it mattered.
+
+    **One consequence to know about:** `ODataFilter.Value` and `ToString()` always give the
+    portable `or`-chain, because a bare value has no endpoint to ask. On a 2.1 endpoint they
+    therefore differ from what is sent. A test asserting on `Value` will keep passing while
+    verifying something the wire no longer does — the same failure mode that produced this
+    feature. Assert on `FakeBusinessCentral.Requests` instead; MIGRATION has the recipe.
 
     `ODataInStyle.Auto` is the new default; `OrChain` and `Native` pin one rendering per call,
     and `BusinessCentralOptions.InStyle` does the same globally. Forcing `Native` without the

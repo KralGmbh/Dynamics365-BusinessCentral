@@ -277,7 +277,8 @@ internal sealed class BusinessCentralUrlBuilder
         // The dominant cause, and the one whose cost is least obvious: Filter.In renders a
         // same-field or-chain because BC gates the OData 'in' operator on schema version 2.1,
         // and each encoded
-        // "(field eq 'value') or " encodes to 38 characters against 17 for "'value',".
+        // For an 8-character key, "(no eq 'EBH00000') or " encodes to 38 characters against
+        // 17 for the "'EBH00000'," it replaces.
         if (orClauses >= 2)
         {
             message
