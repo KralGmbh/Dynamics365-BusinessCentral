@@ -364,3 +364,14 @@ FodyWeavers.xsd
 
 # Local smoke tests (never committed)
 Dynamics365.BusinessCentral.SmokeTest/.DS_Store
+
+# Consumer feedback documents — NEVER commit these.
+# They contain tenant IDs, correlation IDs, environment and company names, the
+# internal entity-set inventory and consumer architecture details. This repository
+# is published; those documents are not. Working copies live outside the repo in
+# ../Dynamics365-BusinessCentral-consumer-feedback/.
+# Removed from all history on 2026-08-03; these patterns stop `git add -A` re-adding them.
+*BASTION*.md
+*-FINDINGS-*.md
+*-FEEDBACK-*.md
+*-FOR-BASTION.md

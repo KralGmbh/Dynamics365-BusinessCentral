@@ -9,9 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [2.0.0-alpha.7] - 2026-08-03
 
-**Prerelease.** The URL-length guard (N4 from
-[PRE-STABLE-REVIEW-BASTION.md](PRE-STABLE-REVIEW-BASTION.md), sharpened by L2 in
-[LIVE-TENANT-FINDINGS-BASTION.md](LIVE-TENANT-FINDINGS-BASTION.md)), plus the correction of
+**Prerelease.** The URL-length guard (from the pre-stable review, sharpened by the
+live-tenant round), plus the correction of
 an alpha.6 claim about derived `$select` that was wrong in one specific case.
 
 ### Added
@@ -155,7 +154,7 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
 
 - **`$select` is case-*insensitive* on Business Central SaaS — the opposite of what alpha.6
   documented.** Measured against a live production tenant
-  ([METADATA-PROBE-FINDINGS-BASTION.md](METADATA-PROBE-FINDINGS-BASTION.md)): `entry_No`,
+  (`$metadata` probe round, live production tenant): `entry_No`,
   `Entry_No` and `ENTRY_NO` all return `200` on the same entity set, and the server answers
   in its own canonical casing regardless of what was requested. One consumer had 16 drifted
   wire names across 5 entity types running in production for months without a failure.
@@ -220,8 +219,8 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
 
 ## [2.0.0-alpha.6] - 2026-07-30
 
-**Prerelease.** The consumer-ergonomics round (F1/F2 from
-[FEATURE-REQUESTS-BASTION.md](FEATURE-REQUESTS-BASTION.md)), shipped ahead of the
+**Prerelease.** The consumer-ergonomics round (F1/F2 from the feature-request
+round), shipped ahead of the
 consumer's fluent-builder migration.
 
 ### Added
@@ -271,7 +270,7 @@ documented, or explicitly scheduled for 2.1.
 
 - **Auto-paging is server-driven** (`QueryAllAsync`, `QueryStreamAsync`, fluent
   `StreamAsync`/`ToAllAsync`), based on live-tenant measurement
-  ([NEXTLINK-FINDINGS-BASTION.md](NEXTLINK-FINDINGS-BASTION.md)): by default no page size
+  (nextLink measurement round): by default no page size
   is sent, Business Central pages at its own configured Max Page Size (20,000 online) and
   continuation follows `@odata.nextLink` — an opaque `$skiptoken` cursor immune to the
   row-shift hazards of `$skip` offset paging, which is gone (a caller-set `WithSkip` still
@@ -302,8 +301,7 @@ documented, or explicitly scheduled for 2.1.
 
 ## [2.0.0-alpha.4] - 2026-07-30
 
-**Prerelease.** Incorporates the first live-tenant validation round
-([LIVE-TENANT-FINDINGS-BASTION.md](LIVE-TENANT-FINDINGS-BASTION.md)): one behavioural fix
+**Prerelease.** Incorporates the first live-tenant validation round: one behavioural fix
 found only by hitting a real tenant, plus field-verified documentation. Remaining before
 stable: the annotated *Unverified* items under [2.0.0-alpha].
 
