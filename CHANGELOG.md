@@ -7,119 +7,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Corrections from a full-solution OData review of the alpha.7 branch. Every behavioural change
-below stops the client from sending something Business Central has no way to answer, or stops a
-document from describing an API that does not exist.
-
-### Fixed
-
-- **Boolean-literal filters are no longer sent.** Business Central's documented filter set is
-  field-and-operator only — Microsoft states that an expression with no AL approximation is
-  rejected — so neither `$filter=false` nor `$filter=(true) and (…)` is answerable. Both were
-  reaching the wire:
-
-  - `Filter.In(field, [])` yields `Filter.None`, which was sent as `?$filter=false`. It now
-    short-circuits: an empty result, `$count` `0`, and **no request**. That is the case that
-    matters, because an upstream key set coming back empty is ordinary, not exotic.
-  - `Filter.All` composed with anything was parenthesised in as `(true) and (…)`. Composition
-    now reduces both constants away — `Filter.All.And(x)` is `x`, `Filter.None.Or(x)` is `x`,
-    `Filter.None.And(x)` is `Filter.None`, and negating either yields the other. Reducing
-    preserves a composed `Filter.In`'s deferred rendering, so dropping a constant never costs
-    the native `in` form.
-
-  The URL builder's "`true` means no `$filter`" rule only ever fired on an *uncomposed* filter,
-  which is why this was invisible. `ODataFilter.Value` is unchanged, so tests asserting on it
-  passed throughout — the gap that let this ship. New tests assert on the request.
-
-- **The URL-length guard throws `BusinessCentralUrlTooLongException`**, not `ArgumentException`.
-  The README promises that all failures derive from `BusinessCentralException`, and a
-  message-level retry policy keyed on that contract never saw this one. It is also a poor fit
-  for `ArgumentException`: the length depends on the data a call is given, so the same call site
-  is fine for 20 keys and refused for 200. `StatusCode` is `0` (nothing was sent) and `Method`
-  is empty; `IsUrlTooLong` distinguishes it from `BusinessCentralConnectionException`, which
-  shares that status. `QueryStringLength`, `UrlLength`, `Limit` and `OrClauseCount` are exposed
-  as properties so a log can route on them without parsing the message.
-
-- **`IsConnectionFailure` now matches on the exception type** rather than on `StatusCode == 0`,
-  which two types now carry. Behaviour is unchanged for every exception the client produced
-  before this release.
-
-- **`EntitySelect` includes a non-public setter marked `[JsonInclude]`.** `System.Text.Json`
-  populates such a property, so it is a real column; excluding it from `$select` left it silently
-  empty on every row while the request still returned `200` — the same silent narrowing the
-  derived projection exists to prevent, running the other way.
-
-- **`EntitySelect` de-duplicates wire names.** Two properties resolving to one name emitted
-  `$select=no,no`, while an explicit `Select(...)` de-duplicated. The two paths now agree.
-
-- **The derived-`$select` hint is suppressed when Business Central names a column the projection
-  never sent.** The hint fires on every `400` by design, phrased conditionally — but when the
-  server has already identified a specific column and it is not one of ours, appending a
-  competing explanation costs the reader the answer they were handed. The discriminator is BC's
-  own quoted-name message shape, already relied on to name the implicated field; no allow-list of
-  error codes is involved, deliberately, since none is recorded here or measured.
-
-- **`Filter.Format` refuses a collection** instead of rendering `no eq System.Object[]` and
-  sending it. The message points at `Filter.In`. Strings are exempt.
-
-- **The `or`-clause diagnostic counts inside `$filter` only.** It matched anywhere in the URL, so
-  a company name or entity-set path containing a standalone "or" inflated the count and could
-  make the exception blame `Filter.In` for a query that never used it.
-
-- **The pager stops when the cursor stops advancing.** An empty page repeating the
-  `@odata.nextLink` just followed cannot yield a row that following it once did not, so the loop
-  terminates instead of spinning. An empty page with a *new* cursor still pages on.
-
-### Documentation
-
-- **`<PackageReleaseNotes>` rewritten against the shipped API.** It named
-  `MaxUrlLength` (default 4000) and `UrlLengthWarningThreshold` (default 2000) — neither exists;
-  the real options are `MaxQueryStringLength` (8000) and `QueryStringLengthWarningThreshold`
-  (6000). It also repeated the `400`/`404` claim this same release retracts in favour of
-  `414 URI Too Long`. This is the only text a consumer reads on nuget.org before installing.
-
-- **`.Or()` cited the wrong server error.** It named `BadRequest_MethodNotImplemented`; Microsoft
-  documents the cross-field `or` rejection as *"The 'OR' operator is not supported on distinct
-  fields on an OData filter."* `BadRequest_MethodNotImplemented` is what `in` answers below schema
-  version 2.1 — a different failure with a different remedy, and the one with a fix attached, so
-  the mix-up sent readers to a setting that cannot help.
-
-- **`in` below schema version 2.1 documented as HTTP `501` *carrying* the OData code
-  `BadRequest_MethodNotImplemented`.** Both were measured live, in separate rounds, and the
-  `BadRequest_` prefix is Business Central's naming rather than the status — so this surfaces as
-  `BusinessCentralServerException`, not as a validation error. Recorded explicitly because the two
-  spellings read as a contradiction.
-
-- **`.Not()` carries the same kind of caveat `.Or()` does.** `not` does not appear in Microsoft's
-  supported filter set. Stated as undocumented rather than as known to fail — it has not been
-  measured here — and pointed at `Filter.NotEquals` and `Filter.IsNotNull`, which are documented.
-
-- **`CountAsync` no longer claims to count "without fetching them" unconditionally.** When the
-  endpoint ignores `$count` it falls back to streaming the entire result set, which against a
-  six-figure entity set is many round trips each buffering a full page. The fallback is a
-  correctness guarantee, not a performance one, and now says so.
-
-- **`Filter.Contains` / `StartsWith` / `EndsWith` render with a space** after the comma in the
-  README table, matching what the code emits and Microsoft's own examples.
-
-- **`EntitySelect`'s enum-formatting assumption documented**: an enum renders as its quoted C#
-  member name, so it matches a Business Central option field only where the member names equal
-  the option strings. BC option values routinely contain spaces, which no member name can spell.
-
-### Tests
-
-- New `ODataWireContractTests` asserts on the **request** for the parts of the surface previously
-  pinned only through `ODataFilter.Value` or a fake's return value: the boolean constants,
-  `$expand` alongside a derived `$select`, a nested navigation path in `$orderby`, `$count` on the
-  path-based API, `Data-Access-Intent` on `QueryRawAsync`, `[JsonInclude]` derivation, wire-name
-  de-duplication, and both pager-termination cases.
-
-- `FilterFormatTests` gains the literal rules that had none: single-quote doubling (including
-  repeated quotes and quotes inside `Filter.In`), `DateTimeOffset` normalisation to UTC, unquoted
-  `Edm.Guid`, quoted enum member names, lowercase booleans, the null literal, and the
-  collection refusal.
-
-## [2.0.0-alpha.7] - 2026-08-03
+## [2.0.0-alpha.7] - 2026-08-04
 
 **Prerelease.** The URL-length guard (from the pre-stable review, sharpened by the
 live-tenant round), plus the correction of
@@ -132,9 +20,9 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
   passes the threshold raises the new `IBusinessCentralObserver.OnUrlLengthWarning` and is
   **still sent**; one past the limit throws before the request leaves the process, naming the
   length, the limit and — when the filter is an `or`-chain — the clause count and `Filter.In`
-  as the likely cause. Either setting may be `null` to disable it. (The exception type is
-  `BusinessCentralUrlTooLongException`; see Unreleased, which corrects this entry's original
-  `ArgumentException`.)
+  as the likely cause. Either setting may be `null` to disable it. The exception is
+  `BusinessCentralUrlTooLongException` — see *Fixed — from the full-solution OData review*
+  below, which is what settled the type.
 
   **The query string, not the whole URL**, because that is what Business Central's gateway
   limits — measured at **8,099** accepted characters, invariant across two environments whose
@@ -314,6 +202,120 @@ an alpha.6 claim about derived `$select` that was wrong in one specific case.
   `Edm.String` properties named `*_Filter`; they do not filter rows but parameterise the
   FlowField calculations on the rows returned. They work through the normal filter API, which
   is not obvious from either side.
+
+The sections below are corrections from a full-solution OData review of this release, made
+before it shipped. Every behavioural change among them stops the client from sending something
+Business Central has no way to answer, or stops a document from describing an API that does
+not exist.
+
+### Fixed — from the full-solution OData review
+
+- **Boolean-literal filters are no longer sent.** Business Central's documented filter set is
+  field-and-operator only — Microsoft states that an expression with no AL approximation is
+  rejected — so neither `$filter=false` nor `$filter=(true) and (…)` is answerable. Both were
+  reaching the wire:
+
+  - `Filter.In(field, [])` yields `Filter.None`, which was sent as `?$filter=false`. It now
+    short-circuits: an empty result, `$count` `0`, and **no request**. That is the case that
+    matters, because an upstream key set coming back empty is ordinary, not exotic.
+  - `Filter.All` composed with anything was parenthesised in as `(true) and (…)`. Composition
+    now reduces both constants away — `Filter.All.And(x)` is `x`, `Filter.None.Or(x)` is `x`,
+    `Filter.None.And(x)` is `Filter.None`, and negating either yields the other. Reducing
+    preserves a composed `Filter.In`'s deferred rendering, so dropping a constant never costs
+    the native `in` form.
+
+  The URL builder's "`true` means no `$filter`" rule only ever fired on an *uncomposed* filter,
+  which is why this was invisible. `ODataFilter.Value` is unchanged, so tests asserting on it
+  passed throughout — the gap that let this ship. New tests assert on the request.
+
+- **The URL-length guard throws `BusinessCentralUrlTooLongException`**, not `ArgumentException`.
+  The README promises that all failures derive from `BusinessCentralException`, and a
+  message-level retry policy keyed on that contract never saw this one. It is also a poor fit
+  for `ArgumentException`: the length depends on the data a call is given, so the same call site
+  is fine for 20 keys and refused for 200. `StatusCode` is `0` (nothing was sent) and `Method`
+  is empty; `IsUrlTooLong` distinguishes it from `BusinessCentralConnectionException`, which
+  shares that status. `QueryStringLength`, `UrlLength`, `Limit` and `OrClauseCount` are exposed
+  as properties so a log can route on them without parsing the message.
+
+- **`IsConnectionFailure` now matches on the exception type** rather than on `StatusCode == 0`,
+  which two types now carry. Behaviour is unchanged for every exception the client produced
+  before this release.
+
+- **`EntitySelect` includes a non-public setter marked `[JsonInclude]`.** `System.Text.Json`
+  populates such a property, so it is a real column; excluding it from `$select` left it silently
+  empty on every row while the request still returned `200` — the same silent narrowing the
+  derived projection exists to prevent, running the other way.
+
+- **`EntitySelect` de-duplicates wire names.** Two properties resolving to one name emitted
+  `$select=no,no`, while an explicit `Select(...)` de-duplicated. The two paths now agree.
+
+- **The derived-`$select` hint is suppressed when Business Central names a column the projection
+  never sent.** The hint fires on every `400` by design, phrased conditionally — but when the
+  server has already identified a specific column and it is not one of ours, appending a
+  competing explanation costs the reader the answer they were handed. The discriminator is BC's
+  own quoted-name message shape, already relied on to name the implicated field; no allow-list of
+  error codes is involved, deliberately, since none is recorded here or measured.
+
+- **`Filter.Format` refuses a collection** instead of rendering `no eq System.Object[]` and
+  sending it. The message points at `Filter.In`. Strings are exempt.
+
+- **The `or`-clause diagnostic counts inside `$filter` only.** It matched anywhere in the URL, so
+  a company name or entity-set path containing a standalone "or" inflated the count and could
+  make the exception blame `Filter.In` for a query that never used it.
+
+- **The pager stops when the cursor stops advancing.** An empty page repeating the
+  `@odata.nextLink` just followed cannot yield a row that following it once did not, so the loop
+  terminates instead of spinning. An empty page with a *new* cursor still pages on.
+
+### Documentation — from the same review
+
+- **`<PackageReleaseNotes>` rewritten against the shipped API.** It named
+  `MaxUrlLength` (default 4000) and `UrlLengthWarningThreshold` (default 2000) — neither exists;
+  the real options are `MaxQueryStringLength` (8000) and `QueryStringLengthWarningThreshold`
+  (6000). It also repeated the `400`/`404` claim this same release retracts in favour of
+  `414 URI Too Long`. This is the only text a consumer reads on nuget.org before installing.
+
+- **`.Or()` cited the wrong server error.** It named `BadRequest_MethodNotImplemented`; Microsoft
+  documents the cross-field `or` rejection as *"The 'OR' operator is not supported on distinct
+  fields on an OData filter."* `BadRequest_MethodNotImplemented` is what `in` answers below schema
+  version 2.1 — a different failure with a different remedy, and the one with a fix attached, so
+  the mix-up sent readers to a setting that cannot help.
+
+- **`in` below schema version 2.1 documented as HTTP `501` *carrying* the OData code
+  `BadRequest_MethodNotImplemented`.** Both were measured live, in separate rounds, and the
+  `BadRequest_` prefix is Business Central's naming rather than the status — so this surfaces as
+  `BusinessCentralServerException`, not as a validation error. Recorded explicitly because the two
+  spellings read as a contradiction.
+
+- **`.Not()` carries the same kind of caveat `.Or()` does.** `not` does not appear in Microsoft's
+  supported filter set. Stated as undocumented rather than as known to fail — it has not been
+  measured here — and pointed at `Filter.NotEquals` and `Filter.IsNotNull`, which are documented.
+
+- **`CountAsync` no longer claims to count "without fetching them" unconditionally.** When the
+  endpoint ignores `$count` it falls back to streaming the entire result set, which against a
+  six-figure entity set is many round trips each buffering a full page. The fallback is a
+  correctness guarantee, not a performance one, and now says so.
+
+- **`Filter.Contains` / `StartsWith` / `EndsWith` render with a space** after the comma in the
+  README table, matching what the code emits and Microsoft's own examples.
+
+- **`EntitySelect`'s enum-formatting assumption documented**: an enum renders as its quoted C#
+  member name, so it matches a Business Central option field only where the member names equal
+  the option strings. BC option values routinely contain spaces, which no member name can spell.
+
+### Tests
+
+- New `ODataWireContractTests` asserts on the **request** for the parts of the surface previously
+  pinned only through `ODataFilter.Value` or a fake's return value: the boolean constants,
+  `$expand` alongside a derived `$select`, a nested navigation path in `$orderby`, `$count` on the
+  path-based API, `Data-Access-Intent` on `QueryRawAsync`, `[JsonInclude]` derivation, wire-name
+  de-duplication, and both pager-termination cases.
+
+- `FilterFormatTests` gains the literal rules that had none: single-quote doubling (including
+  repeated quotes and quotes inside `Filter.In`), `DateTimeOffset` normalisation to UTC, unquoted
+  `Edm.Guid`, quoted enum member names, lowercase booleans, the null literal, and the
+  collection refusal.
+
 
 ### Deferred to 2.1
 

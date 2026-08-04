@@ -47,6 +47,15 @@
             not the whole URL. Bulk key lookups are the case that matters: Filter.In renders
             an or-chain, which costs about twice per key what "in (...)" would.
 
+            Over the limit the client throws BusinessCentralUrlTooLongException, which derives
+            from BusinessCentralException like every other failure and carries the lengths, the
+            limit and the or-clause count as properties.
+
+            Filters Business Central cannot answer are no longer sent. It has no boolean-literal
+            filter, so Filter.In(field, []) now short-circuits to an empty result with no request
+            at all, and Filter.All composed with anything reduces away instead of going out as
+            "(true) and (...)".
+
             Also: a 400 caused by the derived $select now explains where the projection came
             from and how to opt out, and the companion Testing package ships
             BusinessCentralMetadata.AssertProjectionsResolveAsync — one assertion that checks
