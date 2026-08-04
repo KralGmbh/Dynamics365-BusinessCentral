@@ -63,4 +63,70 @@ public class OptionsValidatorTests
 
         Assert.Contains(Failures(options), f => f.Contains(nameof(options.MaxPageSize)));
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Non_Positive_MaxQueryStringLength_Fails_Validation(int value)
+    {
+        var options = Valid();
+        options.MaxQueryStringLength = value;
+
+        Assert.Contains(Failures(options), f => f.Contains(nameof(options.MaxQueryStringLength)));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Non_Positive_QueryStringLengthWarningThreshold_Fails_Validation(int value)
+    {
+        var options = Valid();
+        options.QueryStringLengthWarningThreshold = value;
+
+        Assert.Contains(Failures(options), f => f.Contains(nameof(options.QueryStringLengthWarningThreshold)));
+    }
+
+    // A threshold above the limit can never be reached, silently costing the deployment the
+    // measurement window the two settings exist to create.
+    [Fact]
+    public void Warning_Threshold_Above_MaxQueryStringLength_Fails_Validation()
+    {
+        var options = Valid();
+        options.MaxQueryStringLength = 1000;
+        options.QueryStringLengthWarningThreshold = 2000;
+
+        Assert.Contains(Failures(options), f => f.Contains(nameof(options.QueryStringLengthWarningThreshold)));
+    }
+
+    [Fact]
+    public void Warning_Threshold_Equal_To_MaxQueryStringLength_Passes()
+    {
+        var options = Valid();
+        options.MaxQueryStringLength = 2000;
+        options.QueryStringLengthWarningThreshold = 2000;
+
+        Assert.DoesNotContain(Failures(options), f => f.Contains(nameof(options.QueryStringLengthWarningThreshold)));
+    }
+
+    [Fact]
+    public void Query_String_Length_Defaults_Pass_Validation()
+    {
+        var options = Valid();
+
+        // Measured: the gateway accepts 8,099 query-string characters. Defaults leave headroom.
+        Assert.Equal(8000, options.MaxQueryStringLength);
+        Assert.Equal(6000, options.QueryStringLengthWarningThreshold);
+        Assert.DoesNotContain(Failures(options), f => f.Contains("QueryStringLength"));
+    }
+
+    // Disabling one must not implicate the other.
+    [Fact]
+    public void Null_Query_String_Length_Settings_Pass_Validation()
+    {
+        var options = Valid();
+        options.MaxQueryStringLength = null;
+        options.QueryStringLengthWarningThreshold = null;
+
+        Assert.DoesNotContain(Failures(options), f => f.Contains("QueryStringLength"));
+    }
 }

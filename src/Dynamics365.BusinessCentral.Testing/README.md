@@ -52,10 +52,38 @@ OData you intend. It cannot prove **Business Central's half** — that the serve
 A real example from a production consumer: a test asserting
 `$filter=no in ('EBH100','EBT200')` passed, while the live tenant rejected that exact
 filter with `BadRequest_MethodNotImplemented`, because BC does not support the `in`
-operator without `$schemaversion=2.1`. The fake answers whatever it is scripted to answer.
+operator below schema version 2.1. The fake answers whatever it is scripted to answer.
 
 Treat wire-level compatibility as a separate concern: verify operators against a live
 tenant once, then let these tests guard against regressions in what you *generate*.
+
+## `BusinessCentralMetadata` — the one check the fake cannot do
+
+Because the fake answers what it is scripted to answer, it cannot tell you whether a derived
+`$select` names a real column. The fluent builder projects from your entity type's settable
+scalar properties, and a property mapping to no Business Central column fails the **whole
+query** with a `400`. Nothing else in a normal test suite catches that: mocks do not validate
+`$select` either.
+
+This does, against a live (non-production) tenant:
+
+```csharp
+[Fact]
+public async Task Every_entity_projection_resolves()
+    => await BusinessCentralMetadata.AssertProjectionsResolveAsync(
+           _client, typeof(Item).Assembly);
+```
+
+It derives the `$select` for every `[BusinessCentralEntity]` type in the assembly and throws
+listing **every** unresolved name, so one run tells you everything instead of one `400` at a
+time. `ValidateAsync` returns a `BusinessCentralProjectionReport` rather than throwing, for
+callers that want to log or filter.
+
+Run it on every build, not once at upgrade — the failure is introduced by *adding a property*,
+an edit nobody associates with a query breaking.
+
+`Parse` and `Validate` are pure: hand them a canned `$metadata` document and a list of types to
+test your own tooling around this without a tenant.
 
 ## Assertions
 

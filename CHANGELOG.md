@@ -7,10 +7,334 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Corrections from a full-solution OData review of the alpha.7 branch. Every behavioural change
+below stops the client from sending something Business Central has no way to answer, or stops a
+document from describing an API that does not exist.
+
+### Fixed
+
+- **Boolean-literal filters are no longer sent.** Business Central's documented filter set is
+  field-and-operator only — Microsoft states that an expression with no AL approximation is
+  rejected — so neither `$filter=false` nor `$filter=(true) and (…)` is answerable. Both were
+  reaching the wire:
+
+  - `Filter.In(field, [])` yields `Filter.None`, which was sent as `?$filter=false`. It now
+    short-circuits: an empty result, `$count` `0`, and **no request**. That is the case that
+    matters, because an upstream key set coming back empty is ordinary, not exotic.
+  - `Filter.All` composed with anything was parenthesised in as `(true) and (…)`. Composition
+    now reduces both constants away — `Filter.All.And(x)` is `x`, `Filter.None.Or(x)` is `x`,
+    `Filter.None.And(x)` is `Filter.None`, and negating either yields the other. Reducing
+    preserves a composed `Filter.In`'s deferred rendering, so dropping a constant never costs
+    the native `in` form.
+
+  The URL builder's "`true` means no `$filter`" rule only ever fired on an *uncomposed* filter,
+  which is why this was invisible. `ODataFilter.Value` is unchanged, so tests asserting on it
+  passed throughout — the gap that let this ship. New tests assert on the request.
+
+- **The URL-length guard throws `BusinessCentralUrlTooLongException`**, not `ArgumentException`.
+  The README promises that all failures derive from `BusinessCentralException`, and a
+  message-level retry policy keyed on that contract never saw this one. It is also a poor fit
+  for `ArgumentException`: the length depends on the data a call is given, so the same call site
+  is fine for 20 keys and refused for 200. `StatusCode` is `0` (nothing was sent) and `Method`
+  is empty; `IsUrlTooLong` distinguishes it from `BusinessCentralConnectionException`, which
+  shares that status. `QueryStringLength`, `UrlLength`, `Limit` and `OrClauseCount` are exposed
+  as properties so a log can route on them without parsing the message.
+
+- **`IsConnectionFailure` now matches on the exception type** rather than on `StatusCode == 0`,
+  which two types now carry. Behaviour is unchanged for every exception the client produced
+  before this release.
+
+- **`EntitySelect` includes a non-public setter marked `[JsonInclude]`.** `System.Text.Json`
+  populates such a property, so it is a real column; excluding it from `$select` left it silently
+  empty on every row while the request still returned `200` — the same silent narrowing the
+  derived projection exists to prevent, running the other way.
+
+- **`EntitySelect` de-duplicates wire names.** Two properties resolving to one name emitted
+  `$select=no,no`, while an explicit `Select(...)` de-duplicated. The two paths now agree.
+
+- **The derived-`$select` hint is suppressed when Business Central names a column the projection
+  never sent.** The hint fires on every `400` by design, phrased conditionally — but when the
+  server has already identified a specific column and it is not one of ours, appending a
+  competing explanation costs the reader the answer they were handed. The discriminator is BC's
+  own quoted-name message shape, already relied on to name the implicated field; no allow-list of
+  error codes is involved, deliberately, since none is recorded here or measured.
+
+- **`Filter.Format` refuses a collection** instead of rendering `no eq System.Object[]` and
+  sending it. The message points at `Filter.In`. Strings are exempt.
+
+- **The `or`-clause diagnostic counts inside `$filter` only.** It matched anywhere in the URL, so
+  a company name or entity-set path containing a standalone "or" inflated the count and could
+  make the exception blame `Filter.In` for a query that never used it.
+
+- **The pager stops when the cursor stops advancing.** An empty page repeating the
+  `@odata.nextLink` just followed cannot yield a row that following it once did not, so the loop
+  terminates instead of spinning. An empty page with a *new* cursor still pages on.
+
+### Documentation
+
+- **`<PackageReleaseNotes>` rewritten against the shipped API.** It named
+  `MaxUrlLength` (default 4000) and `UrlLengthWarningThreshold` (default 2000) — neither exists;
+  the real options are `MaxQueryStringLength` (8000) and `QueryStringLengthWarningThreshold`
+  (6000). It also repeated the `400`/`404` claim this same release retracts in favour of
+  `414 URI Too Long`. This is the only text a consumer reads on nuget.org before installing.
+
+- **`.Or()` cited the wrong server error.** It named `BadRequest_MethodNotImplemented`; Microsoft
+  documents the cross-field `or` rejection as *"The 'OR' operator is not supported on distinct
+  fields on an OData filter."* `BadRequest_MethodNotImplemented` is what `in` answers below schema
+  version 2.1 — a different failure with a different remedy, and the one with a fix attached, so
+  the mix-up sent readers to a setting that cannot help.
+
+- **`in` below schema version 2.1 documented as HTTP `501` *carrying* the OData code
+  `BadRequest_MethodNotImplemented`.** Both were measured live, in separate rounds, and the
+  `BadRequest_` prefix is Business Central's naming rather than the status — so this surfaces as
+  `BusinessCentralServerException`, not as a validation error. Recorded explicitly because the two
+  spellings read as a contradiction.
+
+- **`.Not()` carries the same kind of caveat `.Or()` does.** `not` does not appear in Microsoft's
+  supported filter set. Stated as undocumented rather than as known to fail — it has not been
+  measured here — and pointed at `Filter.NotEquals` and `Filter.IsNotNull`, which are documented.
+
+- **`CountAsync` no longer claims to count "without fetching them" unconditionally.** When the
+  endpoint ignores `$count` it falls back to streaming the entire result set, which against a
+  six-figure entity set is many round trips each buffering a full page. The fallback is a
+  correctness guarantee, not a performance one, and now says so.
+
+- **`Filter.Contains` / `StartsWith` / `EndsWith` render with a space** after the comma in the
+  README table, matching what the code emits and Microsoft's own examples.
+
+- **`EntitySelect`'s enum-formatting assumption documented**: an enum renders as its quoted C#
+  member name, so it matches a Business Central option field only where the member names equal
+  the option strings. BC option values routinely contain spaces, which no member name can spell.
+
+### Tests
+
+- New `ODataWireContractTests` asserts on the **request** for the parts of the surface previously
+  pinned only through `ODataFilter.Value` or a fake's return value: the boolean constants,
+  `$expand` alongside a derived `$select`, a nested navigation path in `$orderby`, `$count` on the
+  path-based API, `Data-Access-Intent` on `QueryRawAsync`, `[JsonInclude]` derivation, wire-name
+  de-duplication, and both pager-termination cases.
+
+- `FilterFormatTests` gains the literal rules that had none: single-quote doubling (including
+  repeated quotes and quotes inside `Filter.In`), `DateTimeOffset` normalisation to UTC, unquoted
+  `Edm.Guid`, quoted enum member names, lowercase booleans, the null literal, and the
+  collection refusal.
+
+## [2.0.0-alpha.7] - 2026-08-03
+
+**Prerelease.** The URL-length guard (from the pre-stable review, sharpened by the
+live-tenant round), plus the correction of
+an alpha.6 claim about derived `$select` that was wrong in one specific case.
+
+### Added
+
+- **`BusinessCentralOptions.MaxQueryStringLength`** (default `8000`) and
+  **`QueryStringLengthWarningThreshold`** (default `6000`). A request whose query string
+  passes the threshold raises the new `IBusinessCentralObserver.OnUrlLengthWarning` and is
+  **still sent**; one past the limit throws before the request leaves the process, naming the
+  length, the limit and — when the filter is an `or`-chain — the clause count and `Filter.In`
+  as the likely cause. Either setting may be `null` to disable it. (The exception type is
+  `BusinessCentralUrlTooLongException`; see Unreleased, which corrects this entry's original
+  `ArgumentException`.)
+
+  **The query string, not the whole URL**, because that is what Business Central's gateway
+  limits — measured at **8,099** accepted characters, invariant across two environments whose
+  full URLs differed by the length of their prefixes. The prefix moves with environment name,
+  company name (`Company('KRAL%20AG')`, where the escaped space inflates it) and entity-set
+  path, so a full-URL limit is simultaneously too strict on deployments with long prefixes
+  and too loose on short ones. Both defaults are set from that measurement rather than
+  reasoned from IIS limits, with headroom under the ceiling rather than sitting on it.
+
+  The gap between the two is deliberate. A hard threshold alone would turn queries Business
+  Central currently accepts into client-side exceptions on upgrade; the warning band instead
+  lets a deployment measure the length distribution its real workload produces and size
+  chunking against evidence.
+
+  Past its own ceiling the server answers `414 URI Too Long` — not the opaque `400`/`404`
+  earlier drafts of this entry claimed. The guard's value is therefore pre-flight diagnosis
+  (which filter, how many `or` clauses, and that `Filter.In` is the likely cause), not
+  decoding an unhelpful status.
+
+  Server-issued `@odata.nextLink` continuations are never checked: the server produced them,
+  so its own limits already applied.
+
+- **`IBusinessCentralObserver.OnUrlLengthWarning`** with `BusinessCentralUrlLengthInfo`
+  (`Url`, `UrlLength`, `QueryStringLength`, `Threshold`, `Limit`, `ExceedsLimit`,
+  `OrClauseCount`). A default interface method, so existing observers keep compiling.
+  `QueryStringLength` is the measured quantity; `UrlLength` is kept alongside it because the
+  difference between them is exactly what makes a full-URL limit unportable.
+
+- **`BusinessCentralMetadata` in the Testing package (M4): the derived-`$select` hazard is now
+  checkable in CI**, not just documented.
+
+  ```csharp
+  await BusinessCentralMetadata.AssertProjectionsResolveAsync(client, typeof(Item).Assembly);
+  ```
+
+  Fetches the tenant's `$metadata`, derives the `$select` for every `[BusinessCentralEntity]`
+  type, and throws listing **every** name that matches no column — not the first, because the
+  alternative is learning the same thing one production `400` at a time. `ValidateAsync`
+  returns the report instead of throwing; `Parse` and `Validate` are pure and take a canned
+  document, so the half with the logic in it is unit-testable without a tenant.
+
+  This ships **with** F2 rather than after it, because separating them is what would have made
+  default-on risky: nothing between "upgrade" and "production" otherwise detects a property
+  that is not a column. A consumer's unit suite cannot — mocks do not validate `$select`, and
+  neither does `FakeBusinessCentral`, which proves what OData you generate and never what the
+  tenant accepts. Column matching is case-**insensitive**, following the measurement above; an
+  ordinal match here would report working projections as broken.
+
+- **`IBusinessCentralClient.GetMetadataAsync`** returns the raw `$metadata` EDMX as a string.
+  A default interface method. Deliberately not parsed into a model: the package does not own an
+  EDMX object model and inventing one would be a lasting compatibility liability. The document
+  is large (~8 MB on a real tenant), so it is a build- or startup-time call.
+
+- **`EntitySelect` is public**, with a non-generic `For(Type)` for callers that discover entity
+  types by reflection. It was internal; the Testing package depends only on the main package's
+  public API, and the validator needs exactly the projection the fluent builder would send —
+  reimplementing those rules is precisely the drift this feature exists to prevent.
+
+- **`BusinessCentralOptions.DataAccessIntent`** (default `Unspecified`): sends
+  `Data-Access-Intent: ReadOnly`, letting Business Central answer reads from a database
+  replica. This is the first recommendation in
+  [Microsoft's OData client-performance guidance](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/odata-client-performance)
+  and is worth setting for reporting or synchronisation workloads.
+
+  Opt-in on purpose: where a replica is genuinely used, replication lag means a read issued
+  straight after a write may not observe it — correct for a sync job, wrong for a
+  read-after-write flow, and the package cannot tell which yours is. The header is sent on
+  `GET` **only**, because Microsoft documents that modification requests reject `ReadOnly`
+  outright; attaching it to writes would turn every working write into an error. Streaming
+  continuations and `$metadata` carry it too; the token request never does.
+
+- **`BusinessCentralOptions.AcceptLanguage`** (default `null`): sets `Accept-Language`, which
+  fixes the language of Business Central's error messages instead of letting it vary with
+  tenant configuration. Sent on reads and writes alike.
+
+- **Escape hatches for behaviour inferred from a single deployment.** Most of 2.0's polish came
+  from one production consumer's feedback, which is why the package is as well-measured as it
+  is — but a measurement from one tenant must never be the only thing a consumer can express.
+  Every such default now has a registration-level override, and the defaults themselves are
+  unchanged:
+
+  - **`BusinessCentralOptions.DeriveSelect`** (default `true`) — the global counterpart to the
+    per-query `SelectAll()`. A consumer whose entity classes are broad shared types rather than
+    per-use projections can restore pre-2.0 behaviour in one line instead of at every call site.
+  - **`BusinessCentralOptions.SchemaVersion`** (default `null`) sends `$schemaversion=` on
+    every request, and **`Filter.In` now follows it**: at schema version 2.1 or later it
+    renders the native `field in (…)`, otherwise the portable `or`-chain. One setting, no
+    call-site changes.
+
+    Microsoft documents the `in` operator as working
+    [only in `$schemaversion=2.1`](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-filter-expressions-in-odata-uris),
+    and that is now confirmed live: the same query returns `501` without the parameter and
+    `200` with it, with **byte-identical** response bodies to the `or`-chain control, across
+    five entity sets spanning three kinds of published object. `$schemaversion=2.0` still
+    returns `501`, so it is specifically 2.1. The `in` form is about half the encoded
+    query-string width, which roughly doubles the keys that fit in one request.
+
+    The rendering is resolved **when the request URL is built**, not when the filter is
+    constructed — which is what makes it useful, since a chunked key lookup is almost always
+    `.And(...)`-ed with something else and freezing the choice at construction would mean the
+    automatic form never applied where it mattered.
+
+    **One consequence to know about:** `ODataFilter.Value` and `ToString()` always give the
+    portable `or`-chain, because a bare value has no endpoint to ask. On a 2.1 endpoint they
+    therefore differ from what is sent. A test asserting on `Value` will keep passing while
+    verifying something the wire no longer does — the same failure mode that produced this
+    feature. Assert on `FakeBusinessCentral.Requests` instead; MIGRATION has the recipe.
+
+    `ODataInStyle.Auto` is the new default; `OrChain` and `Native` pin one rendering per call,
+    and `BusinessCentralOptions.InStyle` does the same globally. Forcing `Native` without the
+    schema version produces a request the server answers with `501`, which is the caller's
+    choice to make rather than one the package prevents.
+
+  - **`BusinessCentralOptions.SchemaVersion` reaches every URL builder**, not only list
+    queries. As first shipped it was emitted by one of six, so a consumer setting `"2.1"` read
+    lists under one contract and did reads-by-key, writes, the company list, raw queries and
+    `$metadata` under another — silently, and differently per method. A caller-supplied
+    `$schemaversion` in a raw URL still wins.
+
+### Fixed
+
+- **A `400` caused by the derived `$select` now explains itself.** The projection is derived
+  silently, so the server's message names the rejected column but cannot say why it was
+  asked for — the caller never asked. The exception now states that the `$select` was derived
+  from the entity type, names the implicated property when the server's message identifies
+  one, and gives both remedies (`[JsonIgnore]` on the property, `SelectAll()` on the query).
+  Applies only to fluent queries actually using a derived projection; explicit `Select(...)`,
+  `SelectAll()`, `CountAsync` and the path-based API are untouched.
+
+### Documentation
+
+- **`$select` is case-*insensitive* on Business Central SaaS — the opposite of what alpha.6
+  documented.** Measured against a live production tenant
+  (`$metadata` probe round, live production tenant): `entry_No`,
+  `Entry_No` and `ENTRY_NO` all return `200` on the same entity set, and the server answers
+  in its own canonical casing regardless of what was requested. One consumer had 16 drifted
+  wire names across 5 entity types running in production for months without a failure.
+
+  Every shipped string asserting case-sensitivity is gone — the exception hint, the
+  `EntitySelect` XML docs, MIGRATION and both READMEs. This mattered most in the hint, where
+  the claim would have misdirected *every* real occurrence toward a cause that cannot
+  produce the error, while the server's own message already gave the right answer. A test
+  now pins the hint against the wording returning. Business Central on-premises runs a
+  different OData stack and was not measured, so nothing now claims case-in*sensitivity*
+  either; the honest position is that the package does not know.
+
+- **Corrected an alpha.6 claim.** The derived-`$select` documentation said the feature
+  surfaces latent drift rather than creating breakage. With casing eliminated above, there
+  is exactly **one** cause and it is the created kind: a property that maps to no Business
+  Central column at all used to bind as its default and cost nothing, and now fails the whole
+  request with a `400` before deserialization is ever reached. MIGRATION and both READMEs
+  name it as breakage, with the shape to watch for (a shared base class of system fields
+  inherited by entity sets that do not all expose them).
+
+  Field evidence that the risk is narrow: probed across 13 entity types / 118 derived
+  columns in one production codebase, **zero** missing columns — including that exact
+  inherited-system-fields shape, which existed on all five custom published pages.
+
+- README: a *"URL length and bulk key lookups"* section covering both settings, the observer
+  callback and the `or`-chain arithmetic.
+
+- Testing package README: the projection validator, and what it does and does not prove.
+
+- **README gained a `Performance` section**, mapping
+  [Microsoft's OData client-performance guidance](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/odata-client-performance)
+  onto the package: the two new headers, what the package already does (derived `$select`,
+  server-driven paging, no `$skip` loop), and what is still the caller's job — pairing `Top`
+  with `OrderBy` for stable ranking, filtering on `LastModifiedOn` for history windows, and
+  limiting the set around an expensive `$expand`.
+
+  It also records independent support for the derived `$select` default: Microsoft notes that
+  Business Central supports table extensions, so *"If you omit the `$select` clause, your query
+  will return all fields from the table, including fields from other extensions"* — the
+  projection is a documented performance measure, not only an ergonomic one.
+
+- **FlowFilters are documented.** Business Central exposes a page's FlowFilters as ordinary
+  `Edm.String` properties named `*_Filter`; they do not filter rows but parameterise the
+  FlowField calculations on the rows returned. They work through the normal filter API, which
+  is not obvious from either side.
+
+### Deferred to 2.1
+
+- **Deriving `$select` inside `$expand`** ([#55](https://github.com/KralGmbh/Dynamics365-BusinessCentral/issues/55)).
+  Microsoft recommends it and the package does not do it, so an expand still returns every
+  column of the expanded entity. Held back because it is the same silent-narrowing risk as the
+  root projection, and one such change per release is enough.
+- **OData transactional `$batch`** ([#56](https://github.com/KralGmbh/Dynamics365-BusinessCentral/issues/56)).
+  The real gap is atomicity rather than request count: a business operation spanning several
+  writes currently has no transactional boundary.
+
+- **README gained a `Scope` section.** The package targets the OData v4 **published-pages**
+  endpoint on Business Central SaaS and builds URLs around `Company('NAME')`. The standard
+  `/api/v2.0` REST API uses a different shape (`companies({guid})/…`) and is not supported;
+  on-premises is untested. Stating this is worth more than it costs: a consumer who learns it
+  from the README is inconvenienced, one who learns it after adopting is gone.
+
 ## [2.0.0-alpha.6] - 2026-07-30
 
-**Prerelease.** The consumer-ergonomics round (F1/F2 from
-[FEATURE-REQUESTS-BASTION.md](FEATURE-REQUESTS-BASTION.md)), shipped ahead of the
+**Prerelease.** The consumer-ergonomics round (F1/F2 from the feature-request
+round), shipped ahead of the
 consumer's fluent-builder migration.
 
 ### Added
@@ -38,6 +362,10 @@ consumer's fluent-builder migration.
   casing drift that deserialization tolerated now fails loudly. Path-based `QueryAsync` is
   unchanged.
 
+  > **Superseded.** The case-sensitivity claim above was measured **false** against a live
+  > Business Central SaaS tenant and is corrected in `2.0.0-alpha.7`. Kept here as the
+  > historical record of what alpha.6 shipped; do not act on it.
+
 ### Documentation
 
 - README: builder-form `Where` as the leading example; derived-`$select` explanation; new
@@ -56,7 +384,7 @@ documented, or explicitly scheduled for 2.1.
 
 - **Auto-paging is server-driven** (`QueryAllAsync`, `QueryStreamAsync`, fluent
   `StreamAsync`/`ToAllAsync`), based on live-tenant measurement
-  ([NEXTLINK-FINDINGS-BASTION.md](NEXTLINK-FINDINGS-BASTION.md)): by default no page size
+  (nextLink measurement round): by default no page size
   is sent, Business Central pages at its own configured Max Page Size (20,000 online) and
   continuation follows `@odata.nextLink` — an opaque `$skiptoken` cursor immune to the
   row-shift hazards of `$skip` offset paging, which is gone (a caller-set `WithSkip` still
@@ -87,8 +415,7 @@ documented, or explicitly scheduled for 2.1.
 
 ## [2.0.0-alpha.4] - 2026-07-30
 
-**Prerelease.** Incorporates the first live-tenant validation round
-([LIVE-TENANT-FINDINGS-BASTION.md](LIVE-TENANT-FINDINGS-BASTION.md)): one behavioural fix
+**Prerelease.** Incorporates the first live-tenant validation round: one behavioural fix
 found only by hitting a real tenant, plus field-verified documentation. Remaining before
 stable: the annotated *Unverified* items under [2.0.0-alpha].
 

@@ -1,3 +1,4 @@
+using Dynamics365.BusinessCentral.Errors;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 
@@ -143,8 +144,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
 
     public async Task<List<TEntity>> ToListAsync(CancellationToken cancellationToken = default)
     {
-        var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, BuildOptions(), SelectOrNull, null, cancellationToken)
+        var page = await ExecutePageAsync(BuildOptions(), SelectOrNull, null, cancellationToken)
             .ConfigureAwait(false);
 
         return page.Value;
@@ -155,8 +155,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         var options = BuildOptions();
         options.WithCount();
 
-        var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, null, cancellationToken)
+        var page = await ExecutePageAsync(options, SelectOrNull, null, cancellationToken)
             .ConfigureAwait(false);
 
         return new BusinessCentralPage<TEntity>(page.Value, page.Count, page.NextLink);
@@ -202,8 +201,7 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         options.Top = top;
         options.Skip = skip == 0 ? null : skip;
 
-        return _executor.FetchPageAsync<TEntity>(
-            _path, FilterValue, options, SelectOrNull, maxPageSize, cancellationToken);
+        return ExecutePageAsync(options, SelectOrNull, maxPageSize, cancellationToken);
     }
 
     public async Task<TEntity?> FirstOrDefaultAsync(CancellationToken cancellationToken = default)
@@ -211,11 +209,40 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         var options = BuildOptions();
         options.Top = 1;
 
-        var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, options, SelectOrNull, null, cancellationToken)
+        var page = await ExecutePageAsync(options, SelectOrNull, null, cancellationToken)
             .ConfigureAwait(false);
 
         return page.Value.Count == 0 ? default : page.Value[0];
+    }
+
+    /// <summary>
+    /// Runs one page fetch, adding the derived-<c>$select</c> explanation to a <c>400</c>
+    /// when this query is using one.
+    /// </summary>
+    /// <remarks>
+    /// Only the first request of a stream needs this: a continuation replays the same
+    /// projection, so a projection the server rejects has already failed here. Continuations
+    /// are also sent as the server's verbatim <c>nextLink</c>, which the builder never sees.
+    /// </remarks>
+    private async Task<ODataResponse<TEntity>> ExecutePageAsync(
+        QueryOptions options,
+        IEnumerable<string>? select,
+        int? maxPageSize,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _executor
+                .FetchPageAsync<TEntity>(_path, FilterValue, options, select, maxPageSize, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (BusinessCentralValidationException ex)
+            when (UsesDerivedSelect
+                  && select is not null
+                  && DerivedSelectHint.CouldExplain(ex, EntitySelect.For<TEntity>()))
+        {
+            throw DerivedSelectHint.Decorate<TEntity>(ex, EntitySelect.For<TEntity>());
+        }
     }
 
     public async Task<long> CountAsync(CancellationToken cancellationToken = default)
@@ -226,14 +253,16 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
 
         // A count query returns no rows, so it needs no column list — skip the derived
         // $select rather than sending a pointless projection.
-        var page = await _executor
-            .FetchPageAsync<TEntity>(_path, FilterValue, options, select: null, maxPageSize: null, cancellationToken)
+        var page = await ExecutePageAsync(options, select: null, maxPageSize: null, cancellationToken)
             .ConfigureAwait(false);
 
         if (page.Count is { } count)
             return count;
 
-        // Endpoint ignored $count — fall back to walking the collection.
+        // Endpoint ignored $count — fall back to walking the collection. This is the expensive
+        // path CountAsync's remarks warn about: it pages the whole set to produce one number.
+        // Kept because a wrong count is worse than a slow one, but it is why the interface
+        // documents "without fetching them" as conditional rather than as a guarantee.
         var walked = 0L;
 
         await foreach (var _ in StreamAsync(cancellationToken).ConfigureAwait(false))
@@ -242,16 +271,23 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         return walked;
     }
 
-    private string FilterValue => _filter?.Value ?? string.Empty;
+    private string FilterValue => _filter?.Render(_executor.UseNativeIn) ?? string.Empty;
 
     /// <summary>
-    /// Explicit <c>Select(...)</c> wins; <c>SelectAll()</c> suppresses; otherwise the
-    /// projection is derived from the entity type (<see cref="EntitySelect"/>).
+    /// Whether the projection this query sends came from <see cref="EntitySelect"/> rather
+    /// than from the caller — the condition under which a <c>400</c> is worth explaining.
+    /// </summary>
+    private bool UsesDerivedSelect => _select.Count == 0 && !_selectAll && _executor.DeriveSelect;
+
+    /// <summary>
+    /// Explicit <c>Select(...)</c> wins; <c>SelectAll()</c> suppresses, as does turning
+    /// derivation off at registration; otherwise the projection is derived from the entity
+    /// type (<see cref="EntitySelect"/>).
     /// </summary>
     private IEnumerable<string>? SelectOrNull =>
         _select.Count > 0 ? _select
-        : _selectAll ? null
-        : EntitySelect.For<TEntity>() is { Length: > 0 } derived ? derived : null;
+        : !UsesDerivedSelect ? null
+        : EntitySelect.For<TEntity>() is { Count: > 0 } derived ? derived : null;
 
     private QueryOptions BuildOptions()
     {

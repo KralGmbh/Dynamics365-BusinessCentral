@@ -14,6 +14,30 @@
 
 Upgrading from 1.x? See [MIGRATION.md](MIGRATION.md). Full history in [CHANGELOG.md](CHANGELOG.md).
 
+# 🎯 Scope
+
+Worth knowing before you adopt, because it is not obvious from the API surface.
+
+**Targets the OData v4 published-pages endpoint on Business Central SaaS** —
+`…/ODataV4/Company('NAME')/entitySet`, the surface you get by publishing a page as a web
+service. URLs are built around the `Company('NAME')` segment.
+
+**Not supported yet:**
+
+| | Status |
+| --- | --- |
+| `/api/v2.0` standard REST API | Not supported — uses a different URL shape (`companies({guid})/…`) |
+| Business Central on-premises | Untested. The OData stack differs and authentication is not client credentials |
+| Custom API pages (`/api/publisher/group/v1.0`) | Untested — same URL-shape question as `/api/v2.0` |
+
+`/api/v2.0` support is [tracked for 2.1 in #54](https://github.com/KralGmbh/Dynamics365-BusinessCentral/issues/54).
+
+**On behaviour measured against real tenants.** Several defaults encode observations from
+live Business Central deployments — that `Filter.In` must render an `or`-chain, that
+`$select` is case-insensitive, how paging responds. Tenants vary, and these were not
+measured everywhere, so anything derived from one deployment is overridable at registration
+rather than baked in. Where a default rests on a measurement, its XML documentation says so.
+
 # 📦 Installation
 
 ```bash
@@ -114,10 +138,28 @@ and renders identically.
 `$select=Sell_to_Customer_No,amount,no,status` — the settable scalar properties of
 `SalesOrder`, resolved exactly like deserialization. The entity class states the
 projection once; call sites stop restating it. An explicit `.Select(...)` narrows it,
-`.SelectAll()` requests every column. Two things to know: navigation properties and
-get-only computed properties are excluded automatically, and `$select` is
-**case-sensitive** on the server even though deserialization is not — a `[JsonPropertyName]`
-whose casing drifts from `$metadata` fails loudly here instead of silently deserializing.
+`.SelectAll()` requests every column. Navigation properties and get-only computed
+properties are excluded automatically.
+
+> **A property with no matching column fails the query.** Nothing in the package can consult
+> your tenant's schema, so every derived name is validated by the server. A property that
+> maps to no column on the entity set used to bind as its default and cost nothing; it now
+> enters `$select` and the whole request fails with a `400` naming the field. Remedy with
+> `[JsonIgnore]` on the property or `.SelectAll()` on the query — the exception message
+> names both. Watch for a shared base class of system fields inherited by entity sets that
+> do not all expose them.
+>
+> **Catch it in CI, not in production.** No unit suite detects this — mocks do not validate
+> `$select`, and neither does a transport fake. The Testing package ships a one-line check:
+> ```csharp
+> await BusinessCentralMetadata.AssertProjectionsResolveAsync(client, typeof(Item).Assembly);
+> ```
+> See [Testing](#-testing).
+>
+> **Casing is not a problem.** `$select` was measured **case-insensitive** on Business
+> Central SaaS — three spellings of one column all returned `200`, and the server answers in
+> its own canonical casing regardless of what was requested. A `[JsonPropertyName]` whose
+> casing disagrees with `$metadata` needs no action. (Not measured on-premises.)
 
 | Operation | Method |
 | --------- | ------ |
@@ -257,9 +299,9 @@ Every method has a string overload and a typed overload.
 | `Filter.GreaterOrEqual` | `field ge value` |
 | `Filter.LessThan` | `field lt value` |
 | `Filter.LessOrEqual` | `field le value` |
-| `Filter.Contains` | `contains(field,value)` |
-| `Filter.StartsWith` | `startswith(field,value)` |
-| `Filter.EndsWith` | `endswith(field,value)` |
+| `Filter.Contains` | `contains(field, value)` |
+| `Filter.StartsWith` | `startswith(field, value)` |
+| `Filter.EndsWith` | `endswith(field, value)` |
 | `Filter.In` | `(field eq v1) or (field eq v2) ...` |
 | `Filter.IsNull` | `field eq null` |
 | `Filter.IsNotNull` | `field ne null` |
@@ -271,20 +313,100 @@ var filter = Filter.Equals<SalesOrder>(o => o.Status, "Open")
                    .And(Filter.GreaterThan<SalesOrder>(o => o.Amount, 100));
 ```
 
-`Filter.In` renders a **same-field `or`-chain**, not the OData `in` operator — Business
-Central rejects `in` without `$schemaversion=2.1` (`BadRequest_MethodNotImplemented`).
-With an empty collection it yields a filter matching nothing, so passing an empty key set
-is safe.
+`Filter.In` picks its rendering from your configuration. Business Central supports the OData
+`in` operator, but [only from schema version 2.1](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-filter-expressions-in-odata-uris);
+below that it answers `501`. So tell the client which you have, once:
+
+```csharp
+services.AddBusinessCentral(o => o.SchemaVersion = "2.1");
+```
+
+and every `Filter.In` switches to `no in ('A','B')` — **no call-site changes**. Without it,
+they render the portable same-field `or`-chain `(no eq 'A') or (no eq 'B')`. Both return
+identical rows where both work, verified against a live tenant; the `in` form is about half
+the encoded width, which roughly doubles the keys that fit in one request.
+
+The choice is made when the request URL is built, so composing with `.And(...)` keeps it —
+which matters, because a chunked key lookup is almost always combined with something else.
+Pin a rendering per call with `Filter.In(field, values, ODataInStyle.OrChain)` (or `.Native`),
+or globally with `o.InStyle`.
+
+> Reading `ODataFilter.Value` directly always gives you the `or`-chain: a bare filter value
+> has no endpoint to ask. What goes on the wire is what the configured client rendered.
+
+With an empty collection `Filter.In` yields `Filter.None`, which the client answers with an
+empty result and **no request at all** — so passing an empty key set is safe and free. A single
+value collapses to `eq`.
+
+> **There is no boolean-literal filter.** Business Central's supported filter set is
+> field-and-operator only, so neither `$filter=true` nor `$filter=false` is a thing you can
+> send. The package handles both client-side: `Filter.All` is emitted as no `$filter`, and
+> `Filter.None` short-circuits to an empty result. Composition reduces them away too —
+> `Filter.All.And(x)` is `x`, not `(true) and (x)`.
 
 > **Business Central limitation:** `or` only works between filters on the *same* field.
 > Combining filters on different fields with `.Or(...)` — `field1 eq 1 or field2 eq 2` —
-> has no AL filter equivalent and the server rejects it. `.And(...)` has no such
-> restriction.
+> has no AL filter equivalent and the server rejects it with *"The 'OR' operator is not
+> supported on distinct fields on an OData filter."* No schema version lifts this; the
+> remedies are one request per field, or an AL API page exposing the combination as a single
+> filterable column. `.And(...)` has no such restriction.
+
+> **`.Not()` is not a documented Business Central filter.** `not` does not appear in
+> Microsoft's [supported filter expressions](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-filter-expressions-in-odata-uris),
+> which are field-and-operator only, and Microsoft documents that an expression with no AL
+> approximation is rejected. This has not been measured against a live tenant, so treat it as
+> undocumented rather than as known to fail — but prefer `Filter.NotEquals` (`ne`, AL `<>`) and
+> `Filter.IsNotNull`, which are documented, wherever they express what you need.
 
 > **Null means blank on text fields:** AL text fields cannot be null — an unset field is an
 > empty string, and Business Central maps `eq null` onto "is blank". `Filter.IsNull` on a
 > text field therefore matches empty strings, and `Filter.IsNotNull` *excludes* them —
 > unlike the equivalent LINQ predicate. Verified against a live tenant.
+
+## Query-string length and bulk key lookups
+
+Business Central's gateway limits the **query string**, not the whole URL. Measured against a
+live SaaS tenant across two environments: the ceiling sits at **8,099** accepted query-string
+characters and holds still, while the full URL moves with environment name, company name and
+entity-set path. Past it the server answers `414 URI Too Long`.
+
+```csharp
+services.AddBusinessCentral(o =>
+{
+    o.QueryStringLengthWarningThreshold = 6000;  // default — raises OnUrlLengthWarning
+    o.MaxQueryStringLength              = 8000;  // default — throws BusinessCentralUrlTooLongException
+});
+```
+
+A request between the two is **sent normally** and reported to your observer, so a deployment
+can discover the length distribution its real workload produces. Past `MaxQueryStringLength`
+the client throws `BusinessCentralUrlTooLongException` before the request leaves the process,
+naming the query-string length, the limit, and the `or`-clause count when one is present — all
+of them also available as properties (`QueryStringLength`, `Limit`, `OrClauseCount`,
+`UrlLength`) so a log can route on them.
+
+It is a `BusinessCentralException` like every other failure, with `StatusCode` `0` because
+nothing was sent and `IsUrlTooLong` to tell it apart from a connection failure, which shares
+that status. It is never transient — the same call produces the same length every time.
+
+The value here is pre-flight diagnosis, not decoding an opaque server error — `414` already
+says what happened. What it does not say is *which* filter, how many `or` clauses, or that
+`Filter.In` is the likely cause. Set either option to `null` to disable it.
+
+Server-issued `@odata.nextLink` continuations are never checked — the server produced them,
+so its own limits already applied.
+
+```csharp
+public void OnUrlLengthWarning(BusinessCentralUrlLengthInfo url) =>
+    _logger.LogWarning("BC query string {Length} chars ({OrClauses} or-clauses), limit {Limit}",
+        url.QueryStringLength, url.OrClauseCount, url.Limit);
+```
+
+> **The cheapest fix is usually schema version 2.1.** For 25 eight-character keys the encoded
+> `$filter` is 942 characters as an `or`-chain against 438 natively — and `&$schemaversion=2.1`
+> costs 19, so it recovers essentially the whole difference and roughly doubles the keys that
+> fit in one request. Setting `o.SchemaVersion = "2.1"` applies it to every `Filter.In` with no
+> call-site changes. See [Filters](#-filters).
 
 ## Field names without the builder
 
@@ -301,6 +423,79 @@ var lines = await client.QueryAsync<ProdOrderLine>(
     select: [BusinessCentralField.Of<ProdOrderLine>(l => l.ItemNo),
              BusinessCentralField.Of<ProdOrderLine>(l => l.Quantity)]);
 ```
+
+# ⚡ Performance
+
+Following [Microsoft's OData client-performance guidance](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/odata-client-performance).
+Some of it the package already does for you; two settings are yours to turn on.
+
+## Read from a database replica
+
+Microsoft's first recommendation. `Data-Access-Intent: ReadOnly` lets Business Central answer
+a `GET` from a replica, taking load off the primary:
+
+```csharp
+services.AddBusinessCentral(o =>
+{
+    o.DataAccessIntent = BusinessCentralDataAccessIntent.ReadOnly;
+});
+```
+
+**Opt-in, and deliberately so.** Where a replica is genuinely used, replication lag means a
+read issued straight after a write may not see it — right for a sync or reporting job, wrong
+for a read-after-write flow, and the package cannot tell which yours is. The header is only
+ever sent on `GET`; Microsoft documents that writes reject `ReadOnly` outright, so the client
+never attaches it to `POST`/`PATCH`/`PUT`/`DELETE`.
+
+## Response language
+
+`Accept-Language` fixes the language of Business Central's error messages — worth setting so
+logs don't vary with tenant configuration. Microsoft notes it also governs regional
+formatting of responses.
+
+```csharp
+services.AddBusinessCentral(o => o.AcceptLanguage = "en-US");
+```
+
+## Already handled
+
+| Guidance | How the package follows it |
+| --- | --- |
+| *"Specify the columns you care about in the `$select` clause"* | The fluent builder derives `$select` from the entity type — see [Querying](#-querying). Business Central supports table extensions, so **omitting `$select` returns every field including ones added by other extensions**; this is why the derived projection is on by default |
+| *"Do not use `$top` and `$skip` to implement client-driven paging"* | Streaming reads follow `@odata.nextLink`. There is no `$skip` loop; `$skip` is sent only when you ask for a starting offset |
+| *"Using server-driven paging"* | The default. No page size is sent unless you set one, and then as `Prefer: odata.maxpagesize` |
+
+## Worth knowing
+
+- **`$top` on its own is fine** — Microsoft only discourages it *combined with* `$skip`. If
+  you are ranking rather than sampling, pair `Top(n)` with `OrderBy(...)`: without an explicit
+  order the server's "top n" is not stable between calls.
+- **Filter on `LastModifiedOn` for historical queries.** Business Central updates that system
+  field on write, which makes it the efficient choice for "changed in the last 30 days"
+  windows.
+- **Limit the set when `$expand` is expensive.** Add a `Where(...)` or `Top(n)` alongside a
+  costly expand rather than expanding the whole set.
+- **`$expand` currently sends no inner `$select`**, so an expanded entity comes back with all
+  its properties. Pass the expand clause as a string to narrow it yourself —
+  `Expand("salesOrderLines($select=lineNo,quantity)")` — until this is derived automatically
+  ([#55](https://github.com/KralGmbh/Dynamics365-BusinessCentral/issues/55)).
+
+## FlowFilters
+
+Business Central exposes a page's [FlowFilters](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-flowfilters-in-odata-uris)
+as ordinary `Edm.String` properties named `*_Filter`. They do not filter rows — they
+parameterise the FlowField calculations on the rows you get back:
+
+```csharp
+// Qty_on_Sales_Order comes back calculated for the GREEN location only
+var item = await client.Query<ItemCard>()
+    .Where(f => f.Equals(x => x.No, "1906-S")
+                 .And(f.Equals(x => x.LocationFilter, "GREEN")))
+    .FirstOrDefaultAsync();
+```
+
+Only the FlowFilters needed by FlowFields actually shown on the page appear in `$metadata`,
+so the set is usually smaller than the table defines.
 
 # ♻️ Throttling and retries
 
@@ -377,6 +572,7 @@ client calls, key its policies on this package's exception types — **not** on
 | `BusinessCentralConnectionException` | no response — connection failure / timeout (already retried in-process) | fast requeue curve |
 | `BusinessCentralThrottledException` | `429` — the client already honoured `Retry-After` | slow requeue curve |
 | `ex.IsTransient` | any retry-worthy failure | generic transient handling |
+| `ex.IsUrlTooLong` | the query string exceeded `MaxQueryStringLength`; never sent | dead-letter / alert — chunk the input |
 | everything else | validation/auth/not-found — retrying cannot help | dead-letter / alert |
 
 A policy keyed on `HttpRequestException` written for 1.x **silently stops matching** on
@@ -399,7 +595,12 @@ for logging; the detail lives on properties, and `ToString()` renders everything
 | `BusinessCentralNotFoundException` | `404` |
 | `BusinessCentralThrottledException` | `429` |
 | `BusinessCentralConnectionException` | no response — connection failure or client-side timeout; `StatusCode` is `0` |
+| `BusinessCentralUrlTooLongException` | refused before sending: query string past `MaxQueryStringLength`; `StatusCode` is `0`, `Method` empty |
 | `BusinessCentralServerException` | everything else, and deserialization failures |
+
+Two types carry `StatusCode` `0`, because in neither case did a response arrive. Tell them
+apart with `IsConnectionFailure` (the network was tried and failed) and `IsUrlTooLong` (the
+client refused to send).
 
 ```csharp
 catch (BusinessCentralException ex)
@@ -462,3 +663,23 @@ Multi-page responses (`EnqueuePage(..., nextLink: "page2")`), failures by status
 exception subtype) and network failures are all scriptable; token acquisition is answered
 automatically. For stateful fakes, every `IBusinessCentralClient` member has a default
 implementation, so a hand-written fake implements only the members it uses.
+
+## Validating projections against a real tenant
+
+A transport fake proves what OData you generate, never what Business Central accepts — so it
+cannot tell you whether a derived `$select` names a real column. That gap has a dedicated
+check, which needs a live (non-production) tenant:
+
+```csharp
+[Fact]  // integration test, pointed at a sandbox tenant
+public async Task Every_entity_projection_resolves()
+    => await BusinessCentralMetadata.AssertProjectionsResolveAsync(
+           _client, typeof(Item).Assembly);
+```
+
+It derives the `$select` for every `[BusinessCentralEntity]` type in the assembly and fails
+listing **every** name that matches no column, so one run tells you everything rather than one
+`400` at a time. `ValidateAsync` returns the report instead of throwing.
+
+Worth running on every build rather than once at upgrade: the failure is introduced by *adding
+a property*, which is not an edit anyone associates with a query breaking.

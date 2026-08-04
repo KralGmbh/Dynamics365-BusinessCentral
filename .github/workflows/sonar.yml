@@ -20,19 +20,28 @@ jobs:
           distribution: 'microsoft'
           java-version: '21'
 
+      # All three shipped TFMs, explicitly. The 10.0.x SDK alone can *build* net8.0 and
+      # net9.0 (targeting packs come from NuGet), but running their test hosts needs the
+      # matching runtimes — previously that worked only because the runner image happened
+      # to preinstall them, which is not something a public package should depend on.
       - name: Set up .NET
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
 
       - name: Restore dependencies
         run: dotnet restore Dynamics365.BusinessCentral.slnx
 
+      # No -f: the gate builds and tests every TFM the package ships. Shipping a binary
+      # CI never executed is not a risk worth carrying into a stable release.
       - name: Build
-        run: dotnet build Dynamics365.BusinessCentral.slnx --no-restore -c Release -f net8.0
+        run: dotnet build Dynamics365.BusinessCentral.slnx --no-restore -c Release
 
-      - name: Test
-        run: dotnet test Dynamics365.BusinessCentral.slnx --no-build -c Release -f net8.0
+      - name: Test (net8.0, net9.0, net10.0)
+        run: dotnet test Dynamics365.BusinessCentral.slnx --no-build -c Release
 
       - name: Install Sonar tools
         run: |
@@ -50,6 +59,9 @@ jobs:
             /d:sonar.host.url="https://sonarcloud.io" \
             /d:sonar.cs.vscoveragexml.reportsPaths=coverage.xml
 
+          # Coverage stays single-TFM on purpose: the same tests over the same sources
+          # three times would not move the number, and multi-TFM collection just merges
+          # duplicate hits. The correctness gate above is what runs all three.
           dotnet build Dynamics365.BusinessCentral.slnx --no-incremental -c Release -f net8.0
 
           dotnet-coverage collect \

@@ -16,5 +16,7 @@ internal sealed class NullBusinessCentralObserver : IBusinessCentralObserver
 
     public void OnRequestRetrying(BusinessCentralRetryInfo retry) { }
 
+    public void OnUrlLengthWarning(BusinessCentralUrlLengthInfo url) { }
+
     public void OnDeserializationFailed(BusinessCentralErrorInfo error) { }
 }

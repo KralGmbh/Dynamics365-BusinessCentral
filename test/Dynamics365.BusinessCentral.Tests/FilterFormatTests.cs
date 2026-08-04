@@ -98,4 +98,118 @@ public class FilterFormatTests
 
         Assert.Equal($"lastModifiedDateTime eq {value.ToUniversalTime():O}", filter.Value);
     }
+
+    // OData escapes a single quote inside a string literal by doubling it. This is the
+    // highest-risk escaping rule in the filter surface — get it wrong and a customer named
+    // O'Brien terminates the literal early, producing a filter the server rejects or, worse,
+    // one it misreads.
+    [Fact]
+    public void Single_Quote_In_A_String_Is_Doubled()
+    {
+        var filter = Filter.Equals("name", "O'Brien");
+
+        Assert.Equal("name eq 'O''Brien'", filter.Value);
+    }
+
+    [Fact]
+    public void Every_Single_Quote_Is_Doubled_Not_Just_The_First()
+    {
+        var filter = Filter.Equals("name", "O'Brien's 'shop'");
+
+        Assert.Equal("name eq 'O''Brien''s ''shop'''", filter.Value);
+    }
+
+    [Fact]
+    public void Quote_Doubling_Survives_The_Whole_Pipeline_To_The_Wire()
+    {
+        var filter = Filter.In("name", "O'Brien", "D'Angelo");
+
+        Assert.Equal("(name eq 'O''Brien') or (name eq 'D''Angelo')", filter.Value);
+    }
+
+    // README tells readers to filter on lastModifiedDateTime, which is Edm.DateTimeOffset.
+    // The "O" round-trip format is the OData literal; the offset must be normalised to UTC
+    // so the same instant filters identically regardless of the caller's offset.
+    [Fact]
+    public void DateTimeOffset_Is_Formatted_As_A_Utc_Literal()
+    {
+        var value = new DateTimeOffset(2026, 7, 29, 14, 0, 0, TimeSpan.FromHours(2));
+
+        var filter = Filter.GreaterThan("lastModifiedDateTime", value);
+
+        Assert.Equal("lastModifiedDateTime gt 2026-07-29T12:00:00.0000000+00:00", filter.Value);
+    }
+
+    [Fact]
+    public void DateTimeOffset_Already_Utc_Is_Unchanged()
+    {
+        var value = new DateTimeOffset(2026, 7, 29, 12, 0, 0, TimeSpan.Zero);
+
+        var filter = Filter.Equals("lastModifiedDateTime", value);
+
+        Assert.Equal("lastModifiedDateTime eq 2026-07-29T12:00:00.0000000+00:00", filter.Value);
+    }
+
+    // OData v4 dropped the v3 guid'...' prefix: an Edm.Guid literal is bare and unquoted.
+    // systemId eq <guid> is the most common key filter there is.
+    [Fact]
+    public void Guid_Is_Formatted_Unquoted()
+    {
+        var id = Guid.Parse("2f1b8c4e-9d3a-4f56-8b21-7c0e5a9d1234");
+
+        var filter = Filter.Equals("systemId", id);
+
+        Assert.Equal("systemId eq 2f1b8c4e-9d3a-4f56-8b21-7c0e5a9d1234", filter.Value);
+    }
+
+    private enum OrderStatus
+    {
+        Open,
+        Released
+    }
+
+    // An enum renders as its C# member name, quoted — so it only matches a Business Central
+    // option field whose option strings happen to equal the member names. BC option values
+    // routinely contain spaces, which no member name can spell; this pins the rule so the
+    // limitation stays visible.
+    [Fact]
+    public void Enum_Is_Formatted_As_Its_Quoted_Member_Name()
+    {
+        var filter = Filter.Equals("status", OrderStatus.Released);
+
+        Assert.Equal("status eq 'Released'", filter.Value);
+    }
+
+    [Fact]
+    public void Bool_Is_Formatted_Lowercase()
+    {
+        Assert.Equal("blocked eq true", Filter.Equals("blocked", true).Value);
+        Assert.Equal("blocked eq false", Filter.Equals("blocked", false).Value);
+    }
+
+    [Fact]
+    public void Null_Is_Formatted_As_The_Null_Literal()
+    {
+        Assert.Equal("description eq null", Filter.Equals("description", null).Value);
+    }
+
+    // A collection has no scalar literal. It used to fall through to Convert.ToString and
+    // produce "no eq System.Object[]", which the URL builder encodes and sends. Filter.In is
+    // right there, so this is a plausible slip and worth naming rather than shipping.
+    [Fact]
+    public void Passing_A_Collection_To_A_Scalar_Comparison_Throws_And_Names_Filter_In()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            Filter.Equals("no", new[] { "A", "B" }));
+
+        Assert.Contains("Filter.In", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.String[]", Filter.In("no", "A", "B").Value, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_String_Is_Not_Mistaken_For_A_Collection()
+    {
+        // string is IEnumerable<char>; the guard must exempt it.
+        Assert.Equal("no eq 'ABC'", Filter.Equals("no", "ABC").Value);
+    }
 }

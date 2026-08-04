@@ -150,14 +150,173 @@ with `WithPageSize(500)` to keep the old behaviour — see §3.
 
 A `Query<T>()` call with no explicit `Select(...)` used to request **every column**; it now
 sends a `$select` derived from `T`'s settable scalar properties — the columns the type can
-actually hold. This can only narrow the data requested, so anything that deserialized
-before still deserializes. `.SelectAll()` restores the full row for deliberately partial
-entity types. The path-based `QueryAsync(select:)` is unchanged.
+actually hold. `.SelectAll()` restores the full row for deliberately partial entity types.
+The path-based `QueryAsync(select:)` is unchanged.
 
-**One migration caveat:** `$select` is case-sensitive on the server while deserialization
-is not. A `[JsonPropertyName]` value whose casing drifts from `$metadata` worked silently
-before and now fails with a loud `400` naming the field — verify your wire names against
-`$metadata` once when adopting the fluent builder.
+Narrowing the *response* is safe: anything that deserialized before still deserializes.
+Narrowing the *request* is not, and earlier wording here obscured that by talking only
+about deserialization — **the request can now fail before deserialization is reached.**
+Nothing in the package can consult your tenant's schema, so every derived name is validated
+by the server, and a name it does not recognise fails the whole query with a `400`.
+
+**One way an upgrade can break:** a property that maps to **no Business Central column at
+all**. It used to bind as its default and cost nothing; it now enters `$select` and draws a
+`400` naming the field. This is breakage this release creates, not latent drift it
+surfaces. Say a base class contributes `SystemCreatedAt`/`SystemModifiedAt` to a dozen
+entities and only some published pages expose those columns: nothing in the model says so,
+and today those queries work. After upgrading they `400`. An inherited base class of system
+fields is the exact shape to check.
+
+> **A non-public setter counts as settable when it carries `[JsonInclude]`.** Such a property
+> is populated by `System.Text.Json`, so it is a real column and now enters the derived
+> `$select`. Earlier alpha.7 builds skipped it, which left it silently empty on every row
+> while the request still returned `200`. If one of these maps to no Business Central column,
+> it can now draw the same `400` as any other derived name — the remedy is the same
+> `[JsonIgnore]` or `SelectAll()`.
+
+> **Casing is not a second cause.** Releases up to `2.0.0-alpha.7` warned here that
+> `$select` is case-sensitive server-side and that a drifted `[JsonPropertyName]` would
+> start failing. **That was measured false.** Against a live Business Central SaaS
+> production tenant, `entry_No`, `Entry_No` and `ENTRY_NO` all returned `200` on the same
+> entity set, and the server answers in its own canonical casing regardless of what was
+> requested. One consumer had 16 drifted wire names across 5 entity types in production for
+> months without a single failure. Casing drift needs no action. (Business Central
+> on-premises runs a different OData stack and was not measured, so this is "not
+> case-sensitive where measured", not a guarantee.)
+
+**Check this, and keep checking it.** The Testing package ships a validator:
+
+```csharp
+await BusinessCentralMetadata.AssertProjectionsResolveAsync(client, typeof(Item).Assembly);
+```
+
+It fetches `$metadata`, derives the `$select` for every `[BusinessCentralEntity]` type, and
+fails listing **every** name that matches no column. One assertion, no production risk.
+
+Run it as a one-off before upgrading if you like, but it earns its place as a standing
+integration test, because **your unit suite cannot catch this**. Mocks of
+`IBusinessCentralClient` do not validate `$select`, and neither does `FakeBusinessCentral` —
+a transport fake proves what OData you generate, never what your tenant accepts. Without
+this check the sequence is *upgrade → tests green → production incident*. And the failure is
+introduced by **adding a property**, an edit nobody associates with a query breaking, which
+is why a check that runs on every build beats one you perform once.
+
+Field result from the one production codebase measured before this shipped: 13 entity types,
+118 derived columns, **zero** missing — including the inherited `SystemId` /
+`SystemCreatedAt` / `SystemModifiedAt` shape above, which existed on all five custom
+published pages. Read that as *the failure is not ubiquitous*, not *the failure is rare*:
+those classes were written per use as BC projections, and most of those columns were already
+being named in explicit `select:` lists that had run in production for months. The shapes
+most at risk look different — one broad shared class with convenience properties, a
+speculatively added field, a class that outlived a schema change.
+
+**Remedies**, both already present: `[JsonIgnore]` on a property drops it from the
+projection permanently; `.SelectAll()` on a query sends no `$select` at all. Since
+`2.0.0-alpha.7` the exception itself says the projection was derived, names the implicated
+property, and points at both — you should not have to reason this out from a bare server
+message.
+
+### `Filter.None` no longer sends a request, and `Filter.All` composes away
+
+New in `2.0.0-alpha.7`. Business Central's documented filter set is field-and-operator only —
+there is no boolean-literal construct — so neither `$filter=false` nor `$filter=(true) and (…)`
+is something a tenant can be asked. Earlier alpha.7 builds sent both:
+
+| Expression | Was sent as | Now |
+| ---------- | ----------- | --- |
+| `Filter.In(field, [])` → `Filter.None` | `?$filter=false` | no request; empty result, `Count` `0` |
+| `Filter.All.And(x)` | `?$filter=(true) and (x)` | `?$filter=x` |
+| `Filter.None.Or(x)` | `?$filter=(false) or (x)` | `?$filter=x` |
+| `Filter.All` alone | *(already omitted)* | unchanged |
+
+**What changes for you.** A query whose filter reduces to `Filter.None` completes without a
+round trip, so a handler that counted requests sees one fewer, and `FakeBusinessCentral` records
+none. That is the point: the empty result is the correct answer, and it is now reached without
+asking the server a question it has no way to answer.
+
+`ODataFilter.Value` is unchanged — `Filter.None.Value` is still `"false"`. Only what reaches
+the wire differs, so **tests asserting on `Value` still pass while asserting nothing about the
+request**; the same trap as the section below. Assert on `FakeBusinessCentral.Requests`.
+
+### `ODataFilter.Value` can differ from what goes on the wire
+
+New in `2.0.0-alpha.7`, and only when `SchemaVersion` is `2.1` or later.
+
+`Filter.In` defaults to `ODataInStyle.Auto`, whose rendering is decided by the client when it
+builds the request URL — that is what lets one setting switch every membership filter to the
+native `in` operator. A bare `ODataFilter` has no endpoint to ask, so `Value` and `ToString()`
+always give you the portable `or`-chain:
+
+```csharp
+services.AddBusinessCentral(o => o.SchemaVersion = "2.1");
+
+var filter = Filter.In<Item>(i => i.No, ["A", "B"]);
+
+filter.Value;   // "(no eq 'A') or (no eq 'B')"   — always
+// the request actually sent:  ?$filter=no in ('A','B')&$schemaversion=2.1
+```
+
+**If you have tests asserting on `Value` or `ToString()`, they now verify something the wire
+may not do.** They will not fail — which is the problem. This is the same failure mode as the
+`in`-operator finding that produced this feature: a test that passes against a fake while the
+tenant rejects the real request.
+
+Assert on the request instead. `FakeBusinessCentral` records what was actually sent:
+
+```csharp
+using var bc = new FakeBusinessCentral(o => o.SchemaVersion = "2.1");
+bc.EnqueuePage<Item>();
+
+await bc.Client.Query<Item>().Where(f => f.In(i => i.No, ["A", "B"])).ToListAsync();
+
+Assert.Contains("no in ('A','B')", bc.Requests.Single().DecodedPathAndQuery);
+```
+
+Nothing changes if you do not set `SchemaVersion`, or if you pin a rendering with
+`ODataInStyle.OrChain` / `.Native` — in those cases `Value` and the wire agree.
+
+### A long `$filter` is now refused client-side instead of failing opaquely
+
+New in `2.0.0-alpha.7`. `BusinessCentralOptions.MaxQueryStringLength` defaults to `8000`
+characters; a request that builds a longer **query string** throws
+`BusinessCentralUrlTooLongException` before it is sent.
+`QueryStringLengthWarningThreshold` (default `6000`) raises the new
+`IBusinessCentralObserver.OnUrlLengthWarning` while still sending the request.
+
+> Earlier alpha.7 builds threw `ArgumentException` here. If you wrote a handler against that,
+> re-key it: the exception now derives from `BusinessCentralException` like every other failure
+> the client produces, so `catch (BusinessCentralException)` sees it. Match `ex.IsUrlTooLong`
+> to single it out; `StatusCode` is `0` (nothing was sent), which it shares with
+> `BusinessCentralConnectionException`, so do not key on the status alone.
+
+The limit is on the query string, not the whole URL, because that is what Business Central's
+gateway actually limits — measured at **8,099** accepted characters, invariant across two
+environments whose full URLs differed. Past the server's own ceiling you get
+`414 URI Too Long`, which is not cryptic; the value of failing client-side first is that the
+message names the length, the limit, the `or`-clause count and `Filter.In` as the likely
+cause.
+
+This only bites bulk key lookups, and mainly through `Filter.In`: it falls back to an
+`or`-chain because Business Central gates the OData `in` operator on schema version 2.1, and
+each encoded `(no eq 'EBH00000') or ` costs 38 characters against 17 for the `'EBH00000',` it
+replaces.
+
+**The cheapest fix is usually to stop paying for the workaround.** If your endpoint serves
+schema version 2.1, one setting halves it:
+
+```csharp
+services.AddBusinessCentral(o => o.SchemaVersion = "2.1");
+```
+
+That is all. `Filter.In` defaults to `ODataInStyle.Auto`, which reads the configured schema
+version at request-build time — no call-site changes. Do **not** also pass
+`ODataInStyle.Native`: pinning the rendering means that if the schema version is ever removed
+or lowered the filters keep emitting `in` and start returning `501`, which is exactly what
+`Auto` exists to prevent.
+
+If you have a working query above `8000` characters of query string, raise
+`MaxQueryStringLength` or set it to `null`. Server-issued `@odata.nextLink` continuations are
+never checked.
 
 ### Message-level retry policies must re-key their exceptions
 
@@ -325,4 +484,11 @@ There is no deprecation on the path-based API; migrate at your own pace, or not 
 - [ ] Replace `WithTop` used as a page size with `WithPageSize`
 - [ ] Check `DateTime` filter values for `Kind=Unspecified` semantics (now read as UTC)
 - [ ] Replace `dynamic` writes with the two-generic overloads
+- [ ] **Add `BusinessCentralMetadata.AssertProjectionsResolveAsync` as an integration test**
+      — a property with no matching column now fails the whole query, and nothing else in a
+      normal test suite detects it
+- [ ] Check inherited base classes of system fields against the entity sets that inherit
+      them; not every published page exposes them
+- [ ] Re-check chunk sizes on bulk key lookups against `MaxQueryStringLength` (an `or`-chain costs
+      ~2× per key what `in (...)` would — 38 encoded characters against 17 for an 8-character key)
 - [ ] Optionally simplify configuration and drop hand-built `BaseUrl`

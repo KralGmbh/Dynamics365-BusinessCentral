@@ -105,6 +105,27 @@ public interface IBusinessCentralQuery<TEntity>
     /// <summary>Returns the first matching entity, or <see langword="null"/> when none match.</summary>
     Task<TEntity?> FirstOrDefaultAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Returns how many entities match, without fetching them.</summary>
+    /// <summary>
+    /// Returns how many entities match, asking the server for the count rather than fetching
+    /// the rows — <b>where the endpoint supports it</b>. See the remarks: it does not always.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The request is <c>$count=true&amp;$top=0</c> with no <c>$select</c>, so normally one
+    /// round trip returns the number and no rows.
+    /// </para>
+    /// <para>
+    /// <b>When the endpoint ignores <c>$count</c></b> — some published pages do — there is no
+    /// count in the response, and this falls back to <b>streaming the entire result set and
+    /// counting it</b>. That fallback is invisible, unbounded and potentially very expensive:
+    /// against a six-figure entity set it is many round trips, each buffering a full server
+    /// page. It is a correctness guarantee, not a performance one.
+    /// </para>
+    /// <para>
+    /// If the cost matters more than the exact number, prefer a bounded probe — a
+    /// <c>Top(n)</c> read whose length you inspect — or verify once that your endpoint honours
+    /// <c>$count</c> before relying on this in a hot path.
+    /// </para>
+    /// </remarks>
     Task<long> CountAsync(CancellationToken cancellationToken = default);
 }

@@ -39,6 +39,9 @@ internal sealed class SafeBusinessCentralObserver : IBusinessCentralObserver
     public void OnRequestRetrying(BusinessCentralRetryInfo retry) =>
         Invoke(() => _inner.OnRequestRetrying(retry));
 
+    public void OnUrlLengthWarning(BusinessCentralUrlLengthInfo url) =>
+        Invoke(() => _inner.OnUrlLengthWarning(url));
+
     public void OnDeserializationFailed(BusinessCentralErrorInfo error) =>
         Invoke(() => _inner.OnDeserializationFailed(error));
 

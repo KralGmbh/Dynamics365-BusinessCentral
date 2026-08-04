@@ -428,8 +428,8 @@ public partial class ClientTests
 
         var options = new BusinessCentralOptions
         {
-            BaseUrl = "https://api.businesscentral.dynamics.com/v2.0/11111111-2222-3333-4444-555555555555/UAT3/ODataV4",
-            Company = "KRAL AG",
+            BaseUrl = "https://api.businesscentral.dynamics.com/v2.0/11111111-2222-3333-4444-555555555555/Sandbox/ODataV4",
+            Company = "CRONUS AG",
             TenantId = "tenant",
             ClientId = "client",
             ClientSecret = "secret",
@@ -442,12 +442,12 @@ public partial class ClientTests
             Microsoft.Extensions.Options.Options.Create(options));
 
         // Act
-        await client.QueryAsync<TestEntity>("LDATReservationEntries", "true", select: IdNameFields);
+        await client.QueryAsync<TestEntity>("ExampleReservationEntries", "true", select: IdNameFields);
 
         // Assert
         Assert.NotNull(capturedUrl);
         var url = capturedUrl!;
-        Assert.True(url.Contains("Company('KRAL%20AG')/LDATReservationEntries"), url);
+        Assert.True(url.Contains("Company('CRONUS%20AG')/ExampleReservationEntries"), url);
         Assert.True(url.Contains("$select=id,name"), url);
     }
 
@@ -1643,7 +1643,7 @@ public partial class ClientTests
     {
         ""error"": {
             ""code"": ""BadRequest_ResourceNotFound"",
-            ""message"": ""Resource not found for the segment 'LDATSalesLine'.  CorrelationId:  aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.""
+            ""message"": ""Resource not found for the segment 'ExampleSalesLine'.  CorrelationId:  aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.""
         }
     }";
 

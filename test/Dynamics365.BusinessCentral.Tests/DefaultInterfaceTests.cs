@@ -85,6 +85,10 @@ public class DefaultInterfaceTests
             () => client.GetCompaniesAsync());
         Assert.Contains("GetCompaniesAsync", companies.Message);
 
+        var metadata = await Assert.ThrowsAsync<NotSupportedException>(
+            () => client.GetMetadataAsync());
+        Assert.Contains("GetMetadataAsync", metadata.Message);
+
         var get = await Assert.ThrowsAsync<NotSupportedException>(
             () => client.GetAsync<TestEntity>("orders", "1"));
         Assert.Contains("GetAsync", get.Message);

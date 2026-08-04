@@ -19,13 +19,25 @@ jobs:
         with:
           fetch-depth: 0
 
+      # All three shipped TFMs — the test step below needs their runtimes, not just the
+      # 10.0.x SDK that can compile against them.
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
 
       - run: dotnet restore
 
       - run: dotnet build -c Release --no-restore
+
+      # The publish path gates on its own tests rather than trusting that the last green
+      # SonarCloud run was for this commit. A release is cut from a tag, which need not be
+      # the commit CI last saw — without this, a package can ship from a repo that merely
+      # looks green.
+      - name: Test before publishing
+        run: dotnet test -c Release --no-build
 
       - run: dotnet pack -c Release --no-build
 

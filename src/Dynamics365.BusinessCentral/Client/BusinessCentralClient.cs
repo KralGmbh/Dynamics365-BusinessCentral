@@ -63,7 +63,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         // applied in HttpRequestExtensions.AddJsonHeaders instead.
         _tokenProvider = tokenProvider ?? new BusinessCentralTokenProvider(http, options, _observer);
 
-        _urlBuilder = new BusinessCentralUrlBuilder(_options.ResolvedBaseUrl, _company);
+        _urlBuilder = CreateUrlBuilder(_options, _company, _observer);
     }
 
     /// <summary>Copy constructor used by <see cref="ForCompany"/>.</summary>
@@ -75,8 +75,27 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         _tokenProvider = source._tokenProvider;
         _company = company;
 
-        _urlBuilder = new BusinessCentralUrlBuilder(source._options.ResolvedBaseUrl, company);
+        _urlBuilder = CreateUrlBuilder(source._options, company, source._observer);
     }
+
+    /// <summary>
+    /// Renders a filter for this endpoint. A membership filter left at
+    /// <see cref="ODataInStyle.Auto"/> only learns whether <c>in</c> is available here, where
+    /// the configured schema version is known — <c>ODataFilter.Value</c> cannot know it.
+    /// </summary>
+    private string RenderFilter(ODataFilter? filter) =>
+        filter?.Render(_options.UseNativeIn) ?? string.Empty;
+
+    private static BusinessCentralUrlBuilder CreateUrlBuilder(
+        BusinessCentralOptions options,
+        string company,
+        IBusinessCentralObserver observer) =>
+        new(options.ResolvedBaseUrl,
+            company,
+            options.MaxQueryStringLength,
+            options.QueryStringLengthWarningThreshold,
+            observer,
+            options.SchemaVersion);
 
     /// <inheritdoc />
     public string Company => _company;
@@ -121,6 +140,27 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             cancellationToken).ConfigureAwait(false);
 
         return wrapper.Value;
+    }
+
+    /// <inheritdoc />
+    public async Task<string> GetMetadataAsync(CancellationToken cancellationToken = default)
+    {
+        // $metadata is EDMX XML at the service root, so it needs neither the company segment
+        // nor the JSON Accept header — and its '$' must survive unencoded.
+        var url = _urlBuilder.BuildMetadataUrl();
+
+        using var res = await SendWithAuthRetryAsync(
+            () => CreateMetadataRequest(url), cancellationToken).ConfigureAwait(false);
+
+        return await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private HttpRequestMessage CreateMetadataRequest(string url)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.AddMetadataHeaders();
+        ApplyRequestOptions(req);
+        return req;
     }
 
     /// <inheritdoc />
@@ -169,7 +209,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         Action<QueryOptions>? options = null,
         IEnumerable<string>? select = null,
         CancellationToken cancellationToken = default)
-        => QueryAsync<TEntity>(path, filter?.Value ?? string.Empty, options, select, cancellationToken);
+        => QueryAsync<TEntity>(path, RenderFilter(filter), options, select, cancellationToken);
 
     /// <inheritdoc />
     public async Task<List<TEntity>> QueryAsync<TEntity>(
@@ -238,7 +278,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         var baseOptions = new QueryOptions();
         options?.Invoke(baseOptions);
 
-        var filterValue = filter?.Value ?? string.Empty;
+        var filterValue = RenderFilter(filter);
 
         // Top is a result cap, exactly as documented on WithTop. Paging is server-driven:
         // the per-query PageSize (else the registration-level MaxPageSize, else nothing)
@@ -283,6 +323,10 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
 
     int? IBusinessCentralQueryExecutor.DefaultMaxPageSize => _options.MaxPageSize;
 
+    bool IBusinessCentralQueryExecutor.DeriveSelect => _options.DeriveSelect;
+
+    bool IBusinessCentralQueryExecutor.UseNativeIn => _options.UseNativeIn;
+
     async Task<ODataResponse<TEntity>> IBusinessCentralQueryExecutor.FetchPageAsync<TEntity>(
         string path,
         string filter,
@@ -306,6 +350,25 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         int? maxPageSize,
         CancellationToken cancellationToken)
     {
+        // Filter.None matches nothing, and Business Central has no boolean-literal filter to
+        // say so with: its documented filter set is field-and-operator only, and Microsoft
+        // documents that an expression with no AL equivalent is rejected. So "$filter=false"
+        // is not a pessimal request, it is an unanswerable one — and the empty result is
+        // already the correct answer. Returning it here costs no round trip and, for the case
+        // that produces it in practice (Filter.In over a key set that came back empty), avoids
+        // a 400 that the derived-$select hint would then explain in terms of the projection.
+        //
+        // This is the one choke point both surfaces reach: the fluent builder arrives through
+        // IBusinessCentralQueryExecutor.FetchPageAsync, the path-based API calls it directly.
+        if (filter == ODataFilter.MatchNone)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // $count is answered too — a caller who asked for one gets 0 rather than null,
+            // which keeps CountAsync off its walk-the-collection fallback.
+            return new ODataResponse<TEntity> { Count = options.IncludeCount ? 0 : null };
+        }
+
         var url = _urlBuilder.BuildQueryUrl(path, filter, options, select);
 
         using var res = await SendWithAuthRetryAsync(
@@ -334,7 +397,7 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static HttpRequestMessage CreatePageRequest(string url, int? maxPageSize)
+    private HttpRequestMessage CreatePageRequest(string url, int? maxPageSize)
     {
         var req = CreateJsonRequest(HttpMethod.Get, url);
 
@@ -346,10 +409,11 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         return req;
     }
 
-    private static HttpRequestMessage CreateJsonRequest(HttpMethod method, string url, object? payload = null)
+    private HttpRequestMessage CreateJsonRequest(HttpMethod method, string url, object? payload = null)
     {
         var req = new HttpRequestMessage(method, url);
         req.AddJsonHeaders();
+        ApplyRequestOptions(req);
 
         if (payload != null)
         {
@@ -360,6 +424,16 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         }
 
         return req;
+    }
+
+    /// <summary>
+    /// Applies the registration-level headers that are not specific to one call: the
+    /// read-replica hint and the response language. Both are opt-in and absent by default.
+    /// </summary>
+    private void ApplyRequestOptions(HttpRequestMessage request)
+    {
+        request.AddDataAccessIntent(_options.DataAccessIntent);
+        request.AddAcceptLanguage(_options.AcceptLanguage);
     }
 
     /// <inheritdoc />
