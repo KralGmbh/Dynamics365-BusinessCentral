@@ -1,4 +1,5 @@
 using Dynamics365.BusinessCentral.Errors;
+using Dynamics365.BusinessCentral.OData;
 using Dynamics365.BusinessCentral.Tests.Utils;
 using System.Net;
 using System.Text.Json.Serialization;
@@ -149,6 +150,11 @@ public class DerivedSelectDiagnosticsTests : TestBase
     }
 
     /// <summary>Short names must not match inside longer ones.</summary>
+    /// <remarks>
+    /// The server names a column here, and it is not one the projection sent, so F8's rule
+    /// suppresses the hint outright — the stronger outcome, and the reason this asserts on the
+    /// whole hint rather than only on the field-naming clause.
+    /// </remarks>
     [Fact]
     public async Task Field_Match_Respects_Word_Boundaries()
     {
@@ -160,6 +166,52 @@ public class DerivedSelectDiagnosticsTests : TestBase
 
         // "No" is a derived field, but it only occurs inside "noSuchThing" here.
         Assert.DoesNotContain("one of which is", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("$select derived from", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// F8: when Business Central has already named a column, and it is one the projection never
+    /// sent, the hint would be a competing explanation for an answer the reader already has.
+    /// </summary>
+    [Fact]
+    public async Task Hint_Is_Suppressed_When_The_Server_Names_A_Column_We_Did_Not_Send()
+    {
+        // A $filter on a column that does not exist. The projection is blameless — none of its
+        // names appears in the message.
+        var client = CreateClient(BadRequest(
+            """
+            {"error":{"code":"BadRequest_NotFound",
+             "message":"Could not find a property named 'shippingAgent' on type 'NAV.LdatSummary'."}}
+            """));
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
+            client.Query<LdatSummary>("ldatSummaries")
+                .Where(Filter.Equals("shippingAgent", "DHL"))
+                .ToListAsync());
+
+        Assert.DoesNotContain("$select derived from", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("SelectAll()", ex.Message, StringComparison.Ordinal);
+
+        // The server's own answer survives untouched, decorated only with method and status.
+        Assert.Contains("shippingAgent", ex.Message, StringComparison.Ordinal);
+        Assert.EndsWith("(GET → HTTP 400 BadRequest)", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The suppression must not fire on the case the hint exists for: Business Central quotes
+    /// the type as well as the property, so presence of *a* quoted name proves nothing — only a
+    /// match against the derived list does.
+    /// </summary>
+    [Fact]
+    public async Task Hint_Still_Fires_When_A_Quoted_Name_Is_One_Of_Ours()
+    {
+        var client = CreateClient(BadRequest(MissingColumnBody));
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralValidationException>(() =>
+            client.Query<LdatSummary>("ldatSummaries").ToListAsync());
+
+        Assert.Contains("$select derived from LdatSummary", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("'systemCreatedAt'", ex.Message, StringComparison.Ordinal);
     }
 
     #endregion

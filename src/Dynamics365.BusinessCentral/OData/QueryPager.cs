@@ -40,6 +40,10 @@ internal static class QueryPager
 
         var page = await fetchFirstPage(limit, initialSkip, cancellationToken).ConfigureAwait(false);
 
+        // The cursor that produced the page in hand, so a server that fails to advance it
+        // cannot spin this loop forever.
+        string? followed = null;
+
         while (true)
         {
             foreach (var entity in page.Value)
@@ -57,7 +61,21 @@ internal static class QueryPager
             if (string.IsNullOrWhiteSpace(page.NextLink))
                 yield break;
 
-            page = await fetchNextPage(page.NextLink!, cancellationToken).ConfigureAwait(false);
+            // No-progress guard. An empty page whose nextLink is the cursor we just followed
+            // would return the same empty page forever; following it again cannot produce a
+            // row that following it once did not. Terminating therefore loses nothing, which
+            // is why this stops rather than throws. Both conditions are required: an empty
+            // page with a *new* cursor is legitimate (a page whose every row was filtered
+            // server-side), and so is a repeated cursor that still carried rows.
+            if (page.Value.Count == 0 &&
+                string.Equals(page.NextLink, followed, StringComparison.Ordinal))
+            {
+                yield break;
+            }
+
+            followed = page.NextLink;
+
+            page = await fetchNextPage(followed!, cancellationToken).ConfigureAwait(false);
         }
     }
 }

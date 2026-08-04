@@ -221,8 +221,12 @@ internal sealed class BusinessCentralUrlBuilder
     /// when it produced the link.
     /// </para>
     /// </remarks>
-    /// <exception cref="ArgumentException">
-    /// The query string is longer than the configured <c>MaxQueryStringLength</c>.
+    /// <exception cref="Errors.BusinessCentralUrlTooLongException">
+    /// The query string is longer than the configured <c>MaxQueryStringLength</c>. A
+    /// <see cref="Errors.BusinessCentralException"/> rather than an <see cref="ArgumentException"/>,
+    /// so <c>catch (BusinessCentralException)</c> still sees every failure the client produces —
+    /// this one is data-dependent, not a malformed argument: the same call site is fine for 20
+    /// keys and refused for 200.
     /// </exception>
     private string Guard(string url)
     {
@@ -231,7 +235,7 @@ internal sealed class BusinessCentralUrlBuilder
         // Nothing configured, or comfortably short: the overwhelming majority of calls.
         if (_warnLength is not { } warn || queryLength < warn)
             return _maxLength is { } onlyMax && queryLength > onlyMax
-                ? throw new ArgumentException(BuildTooLongMessage(url, queryLength, onlyMax))
+                ? throw TooLong(url, queryLength, onlyMax)
                 : url;
 
         var exceedsLimit = _maxLength is { } max && queryLength > max;
@@ -250,18 +254,31 @@ internal sealed class BusinessCentralUrlBuilder
         });
 
         return exceedsLimit
-            ? throw new ArgumentException(BuildTooLongMessage(url, queryLength, _maxLength!.Value))
+            ? throw TooLong(url, queryLength, _maxLength!.Value)
             : url;
     }
+
+    private static Errors.BusinessCentralUrlTooLongException TooLong(string url, int queryLength, int limit) =>
+        new(BuildTooLongMessage(url, queryLength, limit),
+            url,
+            url.Length,
+            queryLength,
+            limit,
+            CountOrClauses(url));
 
     /// <summary>
     /// Length of everything after the first <c>?</c>, or <c>0</c> when there is no query string.
     /// </summary>
-    private static int QueryStringLength(string url)
+    private static int QueryStringLength(string url) => QueryString(url).Length;
+
+    /// <summary>
+    /// Everything after the first <c>?</c>, or empty when there is no query string.
+    /// </summary>
+    private static string QueryString(string url)
     {
         var split = url.IndexOf('?', StringComparison.Ordinal);
 
-        return split < 0 ? 0 : url.Length - split - 1;
+        return split < 0 ? string.Empty : url[(split + 1)..];
     }
 
     private static string BuildTooLongMessage(string url, int queryLength, int limit)
@@ -292,13 +309,36 @@ internal sealed class BusinessCentralUrlBuilder
     }
 
     /// <summary>
-    /// Counts <c>or</c> clauses in a built URL. The filter is percent-encoded by the time it
-    /// gets here, so the encoded spelling is the one that matches; the literal form is
-    /// counted too because <see cref="BuildRawUrl"/> passes caller-supplied query strings
-    /// through verbatim.
+    /// Counts <c>or</c> clauses inside the <c>$filter</c> parameter. The filter is
+    /// percent-encoded by the time it gets here, so the encoded spelling is the one that
+    /// matches; the literal form is counted too because <see cref="BuildRawUrl"/> passes
+    /// caller-supplied query strings through verbatim.
     /// </summary>
-    private static int CountOrClauses(string url) =>
-        CountOccurrences(url, "%20or%20") + CountOccurrences(url, " or ");
+    /// <remarks>
+    /// Scoped to <c>$filter</c> rather than run over the whole URL: a company name, entity-set
+    /// path or <c>$orderby</c> column containing a standalone "or" would otherwise inflate the
+    /// count and make the exception message blame <c>Filter.In</c> for a query that never used
+    /// it. The count exists to name a cause, so a false one is worse than none.
+    /// </remarks>
+    private static int CountOrClauses(string url)
+    {
+        var query = QueryString(url);
+
+        if (query.Length == 0)
+            return 0;
+
+        foreach (var parameter in query.Split('&'))
+        {
+            if (!parameter.StartsWith("$filter=", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var value = parameter["$filter=".Length..];
+
+            return CountOccurrences(value, "%20or%20") + CountOccurrences(value, " or ");
+        }
+
+        return 0;
+    }
 
     private static int CountOccurrences(string haystack, string needle)
     {

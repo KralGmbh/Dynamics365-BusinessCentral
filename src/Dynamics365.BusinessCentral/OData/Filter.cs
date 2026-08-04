@@ -98,8 +98,12 @@ public static class Filter
     /// configured <c>BusinessCentralOptions.SchemaVersion</c> of 2.1 or later emits
     /// <c>field in (v1,v2,…)</c>, and anything else emits the portable same-field
     /// <c>or</c>-chain <c>(field eq v1) or (field eq v2) …</c>. Business Central rejects
-    /// <c>in</c> below schema version 2.1 with <c>BadRequest_MethodNotImplemented</c>, and the
-    /// two forms return identical rows where both work — verified against a live tenant.
+    /// <c>in</c> below schema version 2.1 with HTTP <c>501</c> carrying the OData error code
+    /// <c>BadRequest_MethodNotImplemented</c> — both measured against a live tenant, in
+    /// separate rounds. The <c>BadRequest_</c> prefix is Business Central's naming, not the
+    /// status: this is a <c>501</c>, so it surfaces as
+    /// <c>BusinessCentralServerException</c> and not as a validation error. The two renderings
+    /// return identical rows where both work, also verified live.
     /// </para>
     /// <para>
     /// The decision is deferred until the request URL is built, so composing with
@@ -108,10 +112,11 @@ public static class Filter
     /// <see cref="ODataInStyle"/> to pin one rendering.
     /// </para>
     /// <para>
-    /// An empty <paramref name="values"/> produces a filter that matches nothing
-    /// (<c>false</c>), so <c>Filter.In(field, ids)</c> is safe when <c>ids</c> turns out
-    /// to be empty. A single value collapses to a plain <c>eq</c>, which every version accepts
-    /// and which is shorter than either list form.
+    /// An empty <paramref name="values"/> produces <see cref="None"/>, which the client answers
+    /// with an empty result and <b>no request at all</b> — Business Central has no
+    /// boolean-literal filter to express "match nothing" with. So <c>Filter.In(field, ids)</c>
+    /// is safe when <c>ids</c> turns out to be empty, and cheap. A single value collapses to a
+    /// plain <c>eq</c>, which every version accepts and which is shorter than either list form.
     /// </para>
     /// </remarks>
     public static ODataFilter In(string field, params object[] values) =>
@@ -204,10 +209,22 @@ public static class Filter
         IsNotNull(PropertyPath.Resolve(field));
 
     /// <summary>A filter that matches every row. Emitted as no <c>$filter</c> at all.</summary>
+    /// <remarks>
+    /// Composing this away is part of the contract, not an optimisation: <c>.And(...)</c> and
+    /// <c>.Or(...)</c> drop it rather than parenthesising it into the expression, because
+    /// <c>(true) and (status eq 'Open')</c> is not a filter Business Central accepts.
+    /// </remarks>
     public static ODataFilter All => new(ODataFilter.MatchAll);
 
-    /// <summary>A filter that matches nothing.</summary>
-    public static ODataFilter None => new("false");
+    /// <summary>A filter that matches nothing. Answered client-side, without a request.</summary>
+    /// <remarks>
+    /// Business Central's documented filter set is field-and-operator only — it has no boolean
+    /// literal, and Microsoft documents that a filter with no AL equivalent is rejected — so
+    /// this is never sent. A query whose filter is this one returns an empty result without a
+    /// round trip, which is both the correct answer and the only portable way to express it.
+    /// <c>Filter.In(field, [])</c> produces it, so an empty key set is genuinely safe.
+    /// </remarks>
+    public static ODataFilter None => new(ODataFilter.MatchNone);
 
     private static string Format(object? value) =>
         value switch
@@ -223,9 +240,38 @@ public static class Filter
             TimeOnly t => t.ToString("O", CultureInfo.InvariantCulture),
             bool b => b.ToString().ToLowerInvariant(),
             Guid g => g.ToString(),
+            // The C# member name, quoted. Business Central option values are free text and
+            // routinely contain spaces ("Firm Planned"), which no enum member can spell — so
+            // an enum only works here when its member names match the option strings exactly.
+            // Where they cannot, pass the option string itself.
             Enum e => $"'{e}'",
-            _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? "null"
+            _ => FormatFallback(value)
         };
+
+    /// <summary>
+    /// Formats a value no other case claimed, and refuses the one mistake that would otherwise
+    /// reach the server as garbage.
+    /// </summary>
+    /// <remarks>
+    /// A collection falls through to <see cref="Convert.ToString(object?, IFormatProvider?)"/>,
+    /// which yields <c>System.Object[]</c> — a filter the URL builder happily encodes and
+    /// Business Central rejects with no clue as to why. Since <see cref="In(string, object[])"/>
+    /// is right there, passing a collection to a scalar comparison is a plausible slip and is
+    /// worth naming.
+    /// </remarks>
+    private static string FormatFallback(object value)
+    {
+        if (value is System.Collections.IEnumerable and not string)
+        {
+            throw new ArgumentException(
+                $"Cannot format {value.GetType().Name} as a single OData filter value: a " +
+                "collection has no scalar literal. Use Filter.In(field, values) to match any " +
+                "of several values.",
+                nameof(value));
+        }
+
+        return Convert.ToString(value, CultureInfo.InvariantCulture) ?? "null";
+    }
 
     /// <summary>
     /// Formats a <see cref="DateTime"/> as a UTC OData literal.

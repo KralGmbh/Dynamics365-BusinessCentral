@@ -32,6 +32,88 @@ namespace Dynamics365.BusinessCentral.OData;
 internal static class DerivedSelectHint
 {
     /// <summary>
+    /// Whether the derived projection could plausibly be the cause of this <c>400</c>, and the
+    /// hint is therefore worth appending.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The hint suggests rather than asserts, so it is right for it to fire when nothing is
+    /// known. It is <b>not</b> right for it to fire when the server has already named a
+    /// specific column and that column is not one we asked for: there the reader was handed
+    /// the answer, and a competing explanation about the projection can only pull them off it.
+    /// </para>
+    /// <para>
+    /// The discriminator is Business Central's own documented message shape, which
+    /// <see cref="FindImplicatedField"/> already relies on — it quotes the names it is
+    /// complaining about (<c>Could not find a property named 'x' on type 'y'</c>). So: no
+    /// quoted name means no evidence either way, and the hint stands; quoted names that
+    /// include one of ours means the projection is implicated, and the hint names it; quoted
+    /// names that include none of ours means the server is complaining about something the
+    /// projection did not send — a <c>$filter</c> or <c>$orderby</c> column, typically — and
+    /// the hint is suppressed.
+    /// </para>
+    /// <para>
+    /// Deliberately keyed on the message rather than on an allow-list of
+    /// <c>ODataErrorCode</c> values. Codes that name a non-projection cause certainly exist,
+    /// but none is recorded in this repository and none has been measured here; hard-coding
+    /// names that cannot be verified is how a hint ends up asserting something Business
+    /// Central does not do. The quoted-name rule needs no such list.
+    /// </para>
+    /// </remarks>
+    public static bool CouldExplain(
+        BusinessCentralValidationException ex,
+        IReadOnlyList<string> derived)
+    {
+        var haystack = Haystack(ex);
+
+        if (string.IsNullOrWhiteSpace(haystack))
+            return true;
+
+        var quoted = QuotedNames(haystack);
+
+        // Nothing specific named: the hint's conditional wording is still the best available.
+        if (quoted.Count == 0)
+            return true;
+
+        return quoted.Any(name =>
+            derived.Any(d => string.Equals(d, name, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>
+    /// The single-quoted tokens in a server message. Business Central quotes both the property
+    /// it could not find and the type it looked on, so a match against the derived list — not
+    /// the mere presence of a quoted token — is what implicates the projection.
+    /// </summary>
+    private static List<string> QuotedNames(string message)
+    {
+        var names = new List<string>();
+        var index = 0;
+
+        while (index < message.Length)
+        {
+            var open = message.IndexOf('\'', index);
+            if (open < 0)
+                break;
+
+            var close = message.IndexOf('\'', open + 1);
+            if (close < 0)
+                break;
+
+            var token = message[(open + 1)..close];
+
+            if (token.Length > 0)
+                names.Add(token);
+
+            index = close + 1;
+        }
+
+        return names;
+    }
+
+    private static string? Haystack(BusinessCentralValidationException ex) =>
+        string.IsNullOrWhiteSpace(ex.ServerMessage) ? ex.ResponseBody : ex.ServerMessage;
+
+    /// <summary>
     /// Returns <paramref name="ex"/> re-wrapped with the hint appended to its message, all
     /// structured fields preserved, and the original as the inner exception.
     /// </summary>
@@ -99,10 +181,7 @@ internal static class DerivedSelectHint
         BusinessCentralValidationException ex,
         IReadOnlyList<string> derived)
     {
-        var haystack = ex.ServerMessage;
-
-        if (string.IsNullOrWhiteSpace(haystack))
-            haystack = ex.ResponseBody;
+        var haystack = Haystack(ex);
 
         if (string.IsNullOrWhiteSpace(haystack))
             return null;

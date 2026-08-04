@@ -1,3 +1,4 @@
+using Dynamics365.BusinessCentral.Errors;
 using Dynamics365.BusinessCentral.OData;
 using Dynamics365.BusinessCentral.Tests.Utils;
 
@@ -32,7 +33,7 @@ public class UrlLengthGuardTests : TestBase
             }),
             configure: o => o.MaxQueryStringLength = 500);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+        var ex = await Assert.ThrowsAsync<BusinessCentralUrlTooLongException>(() =>
             client.Query<SalesOrder>()
                 .Where(f => f.In(x => x.No, ManyKeys(60)))
                 .ToListAsync());
@@ -49,7 +50,7 @@ public class UrlLengthGuardTests : TestBase
     {
         var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxQueryStringLength = 400);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+        var ex = await Assert.ThrowsAsync<BusinessCentralUrlTooLongException>(() =>
             client.Query<SalesOrder>()
                 .Where(f => f.In(x => x.No, ManyKeys(60)))
                 .ToListAsync());
@@ -64,7 +65,7 @@ public class UrlLengthGuardTests : TestBase
     {
         var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxQueryStringLength = 400);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+        var ex = await Assert.ThrowsAsync<BusinessCentralUrlTooLongException>(() =>
             client.Query<SalesOrder>()
                 .Where(f => f.In(x => x.No, ManyKeys(60)))
                 .ToListAsync());
@@ -80,12 +81,101 @@ public class UrlLengthGuardTests : TestBase
     {
         var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxQueryStringLength = 200);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+        var ex = await Assert.ThrowsAsync<BusinessCentralUrlTooLongException>(() =>
             client.Query<SalesOrder>()
                 .Where(f => f.Equals(x => x.No, new string('X', 300)))
                 .ToListAsync());
 
         Assert.Contains("-character query string", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Filter.In", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The guard is data-dependent — the same call site is fine for a few keys and refused for
+    /// many — so it must not escape as an <see cref="ArgumentException"/> that no handler
+    /// written against "all failures derive from BusinessCentralException" would catch.
+    /// </summary>
+    [Fact]
+    public async Task Too_Long_Is_A_BusinessCentralException_Not_An_ArgumentException()
+    {
+        var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxQueryStringLength = 400);
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralUrlTooLongException>(() =>
+            client.Query<SalesOrder>()
+                .Where(f => f.In(x => x.No, ManyKeys(60)))
+                .ToListAsync());
+
+        Assert.IsAssignableFrom<BusinessCentralException>(ex);
+        Assert.IsNotType<ArgumentException>(ex, exactMatch: false);
+
+        Assert.True(ex.IsUrlTooLong);
+        Assert.False(ex.IsTransient);
+
+        // Status 0 means "no response", but this is a refusal to send rather than a failure to
+        // reach — a caller distinguishing the two gets to, which borrowing 414 would prevent.
+        Assert.Equal(0, (int)ex.StatusCode);
+        Assert.False(ex.IsConnectionFailure);
+    }
+
+    /// <summary>The structured fields carry what the message says, so a log can route on them.</summary>
+    [Fact]
+    public async Task Too_Long_Carries_Structured_Lengths_And_Or_Count()
+    {
+        var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxQueryStringLength = 400);
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralUrlTooLongException>(() =>
+            client.Query<SalesOrder>()
+                .Where(f => f.In(x => x.No, ManyKeys(60)))
+                .ToListAsync());
+
+        Assert.Equal(400, ex.Limit);
+        Assert.True(ex.QueryStringLength > 400);
+        Assert.True(ex.UrlLength > ex.QueryStringLength);
+        Assert.Equal(59, ex.OrClauseCount);
+        Assert.NotNull(ex.RequestUrl);
+    }
+
+    /// <summary>
+    /// A never-sent request has no method, so the summary must not decorate the message with
+    /// one. The message is already self-contained.
+    /// </summary>
+    [Fact]
+    public async Task Too_Long_Message_Names_No_Http_Method()
+    {
+        var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxQueryStringLength = 400);
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralUrlTooLongException>(() =>
+            client.Query<SalesOrder>()
+                .Where(f => f.In(x => x.No, ManyKeys(60)))
+                .ToListAsync());
+
+        Assert.Equal(string.Empty, ex.Method);
+        Assert.DoesNotContain("no response", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("GET", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// F12: the or-count is a diagnostic that names a cause, so it counts inside
+    /// <c>$filter</c> only. A company whose name contains "or" must not make the message blame
+    /// <c>Filter.In</c> for a query that never used it.
+    /// </summary>
+    [Fact]
+    public async Task Or_Count_Ignores_Or_Outside_The_Filter()
+    {
+        var client = CreateClient(
+            AlwaysEmpty(),
+            configure: o =>
+            {
+                o.Company = "Thor or Dora AB";
+                o.MaxQueryStringLength = 200;
+            });
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralUrlTooLongException>(() =>
+            client.Query<SalesOrder>()
+                .Where(f => f.Equals(x => x.No, new string('X', 300)))
+                .ToListAsync());
+
+        Assert.Equal(0, ex.OrClauseCount);
         Assert.DoesNotContain("Filter.In", ex.Message, StringComparison.Ordinal);
     }
 
@@ -174,7 +264,7 @@ public class UrlLengthGuardTests : TestBase
                 o.MaxQueryStringLength = 500;
             });
 
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<BusinessCentralUrlTooLongException>(() =>
             client.Query<SalesOrder>()
                 .Where(f => f.In(x => x.No, ManyKeys(60)))
                 .ToListAsync());
@@ -210,7 +300,7 @@ public class UrlLengthGuardTests : TestBase
                 o.MaxQueryStringLength = 500;
             });
 
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<BusinessCentralUrlTooLongException>(() =>
             client.Query<SalesOrder>()
                 .Where(f => f.In(x => x.No, ManyKeys(60)))
                 .ToListAsync());
@@ -292,7 +382,7 @@ public class UrlLengthGuardTests : TestBase
     {
         var client = CreateClient(AlwaysEmpty(), configure: o => o.MaxQueryStringLength = 300);
 
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<BusinessCentralUrlTooLongException>(() =>
             client.QueryAsync<SalesOrder>(
                 "salesOrders",
                 Filter.In<SalesOrder>(x => x.No, ManyKeys(60))));

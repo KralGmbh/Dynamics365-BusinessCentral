@@ -236,7 +236,10 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
                 .FetchPageAsync<TEntity>(_path, FilterValue, options, select, maxPageSize, cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (BusinessCentralValidationException ex) when (UsesDerivedSelect && select is not null)
+        catch (BusinessCentralValidationException ex)
+            when (UsesDerivedSelect
+                  && select is not null
+                  && DerivedSelectHint.CouldExplain(ex, EntitySelect.For<TEntity>()))
         {
             throw DerivedSelectHint.Decorate<TEntity>(ex, EntitySelect.For<TEntity>());
         }
@@ -256,7 +259,10 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         if (page.Count is { } count)
             return count;
 
-        // Endpoint ignored $count — fall back to walking the collection.
+        // Endpoint ignored $count — fall back to walking the collection. This is the expensive
+        // path CountAsync's remarks warn about: it pages the whole set to produce one number.
+        // Kept because a wrong count is worse than a slow one, but it is why the interface
+        // documents "without fetching them" as conditional rather than as a guarantee.
         var walked = 0L;
 
         await foreach (var _ in StreamAsync(cancellationToken).ConfigureAwait(false))

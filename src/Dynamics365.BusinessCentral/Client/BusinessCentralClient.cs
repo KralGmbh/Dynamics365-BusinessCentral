@@ -350,6 +350,25 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         int? maxPageSize,
         CancellationToken cancellationToken)
     {
+        // Filter.None matches nothing, and Business Central has no boolean-literal filter to
+        // say so with: its documented filter set is field-and-operator only, and Microsoft
+        // documents that an expression with no AL equivalent is rejected. So "$filter=false"
+        // is not a pessimal request, it is an unanswerable one — and the empty result is
+        // already the correct answer. Returning it here costs no round trip and, for the case
+        // that produces it in practice (Filter.In over a key set that came back empty), avoids
+        // a 400 that the derived-$select hint would then explain in terms of the projection.
+        //
+        // This is the one choke point both surfaces reach: the fluent builder arrives through
+        // IBusinessCentralQueryExecutor.FetchPageAsync, the path-based API calls it directly.
+        if (filter == ODataFilter.MatchNone)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // $count is answered too — a caller who asked for one gets 0 rather than null,
+            // which keeps CountAsync off its walk-the-collection fallback.
+            return new ODataResponse<TEntity> { Count = options.IncludeCount ? 0 : null };
+        }
+
         var url = _urlBuilder.BuildQueryUrl(path, filter, options, select);
 
         using var res = await SendWithAuthRetryAsync(

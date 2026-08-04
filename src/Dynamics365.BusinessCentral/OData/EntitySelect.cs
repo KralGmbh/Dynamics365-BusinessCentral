@@ -15,8 +15,10 @@ namespace Dynamics365.BusinessCentral.OData;
 /// name that is not a real column fails the query with a <c>400</c>:
 /// </para>
 /// <list type="bullet">
-/// <item>public instance properties, readable <b>and settable</b> (<c>set</c> or
-/// <c>init</c>) — a get-only computed property cannot receive data and is not a column;</item>
+/// <item>public instance properties, readable <b>and settable</b> — a public <c>set</c> or
+/// <c>init</c>, or a non-public one marked <c>[JsonInclude]</c>, which
+/// <c>System.Text.Json</c> populates all the same. A get-only computed property cannot
+/// receive data and is not a column;</item>
 /// <item>scalar types only (value types and <see cref="string"/>, including nullables) —
 /// classes and collections are navigations, which belong in <c>$expand</c>;</item>
 /// <item>not unconditionally <c>[JsonIgnore]</c> — conditional ignores such as
@@ -73,13 +75,33 @@ public static class EntitySelect
     public static IReadOnlyList<string> For(Type type) => _cache.GetOrAdd(type, static type =>
         type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
-            .Where(p => p.SetMethod is { IsPublic: true })
+            .Where(IsSettable)
             .Where(p => IsScalar(p.PropertyType))
             .Where(p => p.GetCustomAttribute<JsonIgnoreAttribute>() is not { Condition: JsonIgnoreCondition.Always })
             .Select(PropertyPath.ResolveName)
             .Where(name => !name.StartsWith('@'))
+            // Two properties can resolve to one wire name — a [JsonPropertyName("no")] beside
+            // a property already called No. Explicit Select(...) already de-duplicates, so
+            // deriving must too, or the same query emits "$select=no,no" one way and "no" the
+            // other.
+            .Distinct(StringComparer.Ordinal)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray());
+
+    /// <summary>
+    /// Whether the property can receive data from a deserialized response, and is therefore a
+    /// column worth asking for.
+    /// </summary>
+    /// <remarks>
+    /// A public setter is the ordinary case. <c>[JsonInclude]</c> is the other one: it tells
+    /// <c>System.Text.Json</c> to use a non-public setter, so such a property <b>does</b> get
+    /// populated — and excluding it from <c>$select</c> would leave it silently empty on every
+    /// row while the request still returned <c>200</c>. That is the same silent-narrowing
+    /// failure the derived projection exists to avoid, running the other way.
+    /// </remarks>
+    private static bool IsSettable(PropertyInfo property) =>
+        property.SetMethod is { } setter &&
+        (setter.IsPublic || property.GetCustomAttribute<JsonIncludeAttribute>() is not null);
 
     private static bool IsScalar(Type type)
     {

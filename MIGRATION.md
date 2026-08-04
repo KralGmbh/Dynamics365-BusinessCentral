@@ -167,6 +167,13 @@ entities and only some published pages expose those columns: nothing in the mode
 and today those queries work. After upgrading they `400`. An inherited base class of system
 fields is the exact shape to check.
 
+> **A non-public setter counts as settable when it carries `[JsonInclude]`.** Such a property
+> is populated by `System.Text.Json`, so it is a real column and now enters the derived
+> `$select`. Earlier alpha.7 builds skipped it, which left it silently empty on every row
+> while the request still returned `200`. If one of these maps to no Business Central column,
+> it can now draw the same `400` as any other derived name — the remedy is the same
+> `[JsonIgnore]` or `SelectAll()`.
+
 > **Casing is not a second cause.** Releases up to `2.0.0-alpha.7` warned here that
 > `$select` is case-sensitive server-side and that a drifted `[JsonPropertyName]` would
 > start failing. **That was measured false.** Against a live Business Central SaaS
@@ -209,6 +216,28 @@ projection permanently; `.SelectAll()` on a query sends no `$select` at all. Sin
 property, and points at both — you should not have to reason this out from a bare server
 message.
 
+### `Filter.None` no longer sends a request, and `Filter.All` composes away
+
+New in `2.0.0-alpha.7`. Business Central's documented filter set is field-and-operator only —
+there is no boolean-literal construct — so neither `$filter=false` nor `$filter=(true) and (…)`
+is something a tenant can be asked. Earlier alpha.7 builds sent both:
+
+| Expression | Was sent as | Now |
+| ---------- | ----------- | --- |
+| `Filter.In(field, [])` → `Filter.None` | `?$filter=false` | no request; empty result, `Count` `0` |
+| `Filter.All.And(x)` | `?$filter=(true) and (x)` | `?$filter=x` |
+| `Filter.None.Or(x)` | `?$filter=(false) or (x)` | `?$filter=x` |
+| `Filter.All` alone | *(already omitted)* | unchanged |
+
+**What changes for you.** A query whose filter reduces to `Filter.None` completes without a
+round trip, so a handler that counted requests sees one fewer, and `FakeBusinessCentral` records
+none. That is the point: the empty result is the correct answer, and it is now reached without
+asking the server a question it has no way to answer.
+
+`ODataFilter.Value` is unchanged — `Filter.None.Value` is still `"false"`. Only what reaches
+the wire differs, so **tests asserting on `Value` still pass while asserting nothing about the
+request**; the same trap as the section below. Assert on `FakeBusinessCentral.Requests`.
+
 ### `ODataFilter.Value` can differ from what goes on the wire
 
 New in `2.0.0-alpha.7`, and only when `SchemaVersion` is `2.1` or later.
@@ -249,9 +278,16 @@ Nothing changes if you do not set `SchemaVersion`, or if you pin a rendering wit
 ### A long `$filter` is now refused client-side instead of failing opaquely
 
 New in `2.0.0-alpha.7`. `BusinessCentralOptions.MaxQueryStringLength` defaults to `8000`
-characters; a request that builds a longer **query string** throws an `ArgumentException`
-before it is sent. `QueryStringLengthWarningThreshold` (default `6000`) raises the new
+characters; a request that builds a longer **query string** throws
+`BusinessCentralUrlTooLongException` before it is sent.
+`QueryStringLengthWarningThreshold` (default `6000`) raises the new
 `IBusinessCentralObserver.OnUrlLengthWarning` while still sending the request.
+
+> Earlier alpha.7 builds threw `ArgumentException` here. If you wrote a handler against that,
+> re-key it: the exception now derives from `BusinessCentralException` like every other failure
+> the client produces, so `catch (BusinessCentralException)` sees it. Match `ex.IsUrlTooLong`
+> to single it out; `StatusCode` is `0` (nothing was sent), which it shares with
+> `BusinessCentralConnectionException`, so do not key on the status alone.
 
 The limit is on the query string, not the whole URL, because that is what Business Central's
 gateway actually limits — measured at **8,099** accepted characters, invariant across two

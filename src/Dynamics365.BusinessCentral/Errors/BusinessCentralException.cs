@@ -71,7 +71,20 @@ public abstract class BusinessCentralException : Exception
     public bool IsAuth => StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
 
     /// <summary>No response was received: connection failure or client-side timeout.</summary>
-    public bool IsConnectionFailure => StatusCode == 0;
+    /// <remarks>
+    /// Matches on the exception type rather than on <see cref="StatusCode"/> being <c>0</c>.
+    /// Both no-response types carry status <c>0</c> — the other being
+    /// <see cref="BusinessCentralUrlTooLongException"/>, which is a refusal to send rather
+    /// than a failure to reach — and only this one means the network was actually tried.
+    /// </remarks>
+    public bool IsConnectionFailure => this is BusinessCentralConnectionException;
+
+    /// <summary>
+    /// The client refused the request before sending it, because its query string exceeded
+    /// <c>BusinessCentralOptions.MaxQueryStringLength</c>. Never transient: the same call
+    /// produces the same length every time.
+    /// </summary>
+    public bool IsUrlTooLong => this is BusinessCentralUrlTooLongException;
 
     /// <summary>Creates a new <see cref="BusinessCentralException"/>.</summary>
     /// <param name="message">Short, single-line description of the failure.</param>
@@ -111,6 +124,12 @@ public abstract class BusinessCentralException : Exception
         var trimmed = string.IsNullOrWhiteSpace(message)
             ? $"Business Central request failed."
             : message.Trim().ReplaceLineEndings(" ");
+
+        // A request refused before it was built has no method to name, and its message
+        // already says what happened — decorating it with "( → no response)" would only
+        // add noise. Only BusinessCentralUrlTooLongException takes this branch.
+        if (string.IsNullOrEmpty(method))
+            return trimmed;
 
         // Status 0 means no response was ever received (connection failure or timeout).
         return status == 0
@@ -279,6 +298,70 @@ public sealed class BusinessCentralServerException : BusinessCentralException
         HttpStatusCode.BadGateway or
         HttpStatusCode.ServiceUnavailable or
         HttpStatusCode.GatewayTimeout;
+}
+
+/// <summary>
+/// The client refused to send a request whose query string exceeded
+/// <c>BusinessCentralOptions.MaxQueryStringLength</c>. Never transient.
+/// <see cref="BusinessCentralException.StatusCode"/> is <c>0</c> and
+/// <see cref="BusinessCentralException.Method"/> is empty, because the request was never sent
+/// and never had either.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This is a pre-flight refusal, not a server answer. Business Central's gateway answers
+/// <c>414 URI Too Long</c> past its own ceiling — measured at 8,099 accepted query-string
+/// characters — and the point of failing first is that this exception can name the length, the
+/// limit and the <c>or</c>-clause count, which a bare <c>414</c> cannot. Keeping status at
+/// <c>0</c> rather than borrowing <c>414</c> is what lets a caller tell the two apart.
+/// </para>
+/// <para>
+/// It derives from <see cref="BusinessCentralException"/> so that
+/// <c>catch (BusinessCentralException)</c> keeps seeing every failure the client produces —
+/// the guard used to throw <see cref="ArgumentException"/>, which no handler written against
+/// that contract would catch, and which is a poor fit besides: the length depends on the data
+/// a call is given, not on the arguments being malformed.
+/// </para>
+/// </remarks>
+public sealed class BusinessCentralUrlTooLongException : BusinessCentralException
+{
+    /// <summary>Length of the query string that was refused.</summary>
+    public int QueryStringLength { get; }
+
+    /// <summary>Length of the whole URL, of which the query string is the measured part.</summary>
+    public int UrlLength { get; }
+
+    /// <summary>The configured <c>MaxQueryStringLength</c> that was exceeded.</summary>
+    public int Limit { get; }
+
+    /// <summary>
+    /// How many <c>or</c> clauses the URL contains, counted inside <c>$filter</c> only. Two or
+    /// more usually means a <see cref="OData.Filter.In(string, object[])"/> rendered as an
+    /// or-chain, which is the dominant cause of hitting this limit.
+    /// </summary>
+    public int OrClauseCount { get; }
+
+    /// <summary>Creates a new <see cref="BusinessCentralUrlTooLongException"/>.</summary>
+    /// <param name="message">Short, single-line description of the failure.</param>
+    /// <param name="requestUrl">The URL that was built but not sent.</param>
+    /// <param name="urlLength">Length of the whole URL.</param>
+    /// <param name="queryStringLength">Length of the query string that was refused.</param>
+    /// <param name="limit">The configured limit that was exceeded.</param>
+    /// <param name="orClauseCount">Number of <c>or</c> clauses found in the filter.</param>
+    public BusinessCentralUrlTooLongException(
+        string message,
+        string? requestUrl,
+        int urlLength,
+        int queryStringLength,
+        int limit,
+        int orClauseCount)
+        : base(message, 0, string.Empty, requestUrl, null, null, null, null)
+    {
+        UrlLength = urlLength;
+        QueryStringLength = queryStringLength;
+        Limit = limit;
+        OrClauseCount = orClauseCount;
+    }
 }
 
 internal sealed class BusinessCentralODataError

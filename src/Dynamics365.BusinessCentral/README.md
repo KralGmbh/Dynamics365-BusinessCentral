@@ -299,9 +299,9 @@ Every method has a string overload and a typed overload.
 | `Filter.GreaterOrEqual` | `field ge value` |
 | `Filter.LessThan` | `field lt value` |
 | `Filter.LessOrEqual` | `field le value` |
-| `Filter.Contains` | `contains(field,value)` |
-| `Filter.StartsWith` | `startswith(field,value)` |
-| `Filter.EndsWith` | `endswith(field,value)` |
+| `Filter.Contains` | `contains(field, value)` |
+| `Filter.StartsWith` | `startswith(field, value)` |
+| `Filter.EndsWith` | `endswith(field, value)` |
 | `Filter.In` | `(field eq v1) or (field eq v2) ...` |
 | `Filter.IsNull` | `field eq null` |
 | `Filter.IsNotNull` | `field ne null` |
@@ -334,13 +334,29 @@ or globally with `o.InStyle`.
 > Reading `ODataFilter.Value` directly always gives you the `or`-chain: a bare filter value
 > has no endpoint to ask. What goes on the wire is what the configured client rendered.
 
-With an empty collection `Filter.In` yields a filter matching nothing, so passing an empty key
-set is safe; a single value collapses to `eq`.
+With an empty collection `Filter.In` yields `Filter.None`, which the client answers with an
+empty result and **no request at all** — so passing an empty key set is safe and free. A single
+value collapses to `eq`.
+
+> **There is no boolean-literal filter.** Business Central's supported filter set is
+> field-and-operator only, so neither `$filter=true` nor `$filter=false` is a thing you can
+> send. The package handles both client-side: `Filter.All` is emitted as no `$filter`, and
+> `Filter.None` short-circuits to an empty result. Composition reduces them away too —
+> `Filter.All.And(x)` is `x`, not `(true) and (x)`.
 
 > **Business Central limitation:** `or` only works between filters on the *same* field.
 > Combining filters on different fields with `.Or(...)` — `field1 eq 1 or field2 eq 2` —
-> has no AL filter equivalent and the server rejects it. `.And(...)` has no such
-> restriction.
+> has no AL filter equivalent and the server rejects it with *"The 'OR' operator is not
+> supported on distinct fields on an OData filter."* No schema version lifts this; the
+> remedies are one request per field, or an AL API page exposing the combination as a single
+> filterable column. `.And(...)` has no such restriction.
+
+> **`.Not()` is not a documented Business Central filter.** `not` does not appear in
+> Microsoft's [supported filter expressions](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/use-filter-expressions-in-odata-uris),
+> which are field-and-operator only, and Microsoft documents that an expression with no AL
+> approximation is rejected. This has not been measured against a live tenant, so treat it as
+> undocumented rather than as known to fail — but prefer `Filter.NotEquals` (`ne`, AL `<>`) and
+> `Filter.IsNotNull`, which are documented, wherever they express what you need.
 
 > **Null means blank on text fields:** AL text fields cannot be null — an unset field is an
 > empty string, and Business Central maps `eq null` onto "is blank". `Filter.IsNull` on a
@@ -358,14 +374,20 @@ entity-set path. Past it the server answers `414 URI Too Long`.
 services.AddBusinessCentral(o =>
 {
     o.QueryStringLengthWarningThreshold = 6000;  // default — raises OnUrlLengthWarning
-    o.MaxQueryStringLength              = 8000;  // default — throws ArgumentException
+    o.MaxQueryStringLength              = 8000;  // default — throws BusinessCentralUrlTooLongException
 });
 ```
 
 A request between the two is **sent normally** and reported to your observer, so a deployment
 can discover the length distribution its real workload produces. Past `MaxQueryStringLength`
-the client throws before the request leaves the process, naming the query-string length, the
-limit, and the `or`-clause count when one is present.
+the client throws `BusinessCentralUrlTooLongException` before the request leaves the process,
+naming the query-string length, the limit, and the `or`-clause count when one is present — all
+of them also available as properties (`QueryStringLength`, `Limit`, `OrClauseCount`,
+`UrlLength`) so a log can route on them.
+
+It is a `BusinessCentralException` like every other failure, with `StatusCode` `0` because
+nothing was sent and `IsUrlTooLong` to tell it apart from a connection failure, which shares
+that status. It is never transient — the same call produces the same length every time.
 
 The value here is pre-flight diagnosis, not decoding an opaque server error — `414` already
 says what happened. What it does not say is *which* filter, how many `or` clauses, or that
@@ -550,6 +572,7 @@ client calls, key its policies on this package's exception types — **not** on
 | `BusinessCentralConnectionException` | no response — connection failure / timeout (already retried in-process) | fast requeue curve |
 | `BusinessCentralThrottledException` | `429` — the client already honoured `Retry-After` | slow requeue curve |
 | `ex.IsTransient` | any retry-worthy failure | generic transient handling |
+| `ex.IsUrlTooLong` | the query string exceeded `MaxQueryStringLength`; never sent | dead-letter / alert — chunk the input |
 | everything else | validation/auth/not-found — retrying cannot help | dead-letter / alert |
 
 A policy keyed on `HttpRequestException` written for 1.x **silently stops matching** on
@@ -572,7 +595,12 @@ for logging; the detail lives on properties, and `ToString()` renders everything
 | `BusinessCentralNotFoundException` | `404` |
 | `BusinessCentralThrottledException` | `429` |
 | `BusinessCentralConnectionException` | no response — connection failure or client-side timeout; `StatusCode` is `0` |
+| `BusinessCentralUrlTooLongException` | refused before sending: query string past `MaxQueryStringLength`; `StatusCode` is `0`, `Method` empty |
 | `BusinessCentralServerException` | everything else, and deserialization failures |
+
+Two types carry `StatusCode` `0`, because in neither case did a response arrive. Tell them
+apart with `IsConnectionFailure` (the network was tried and failed) and `IsUrlTooLong` (the
+client refused to send).
 
 ```csharp
 catch (BusinessCentralException ex)

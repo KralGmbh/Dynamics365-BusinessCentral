@@ -15,6 +15,15 @@ public sealed class ODataFilter
     internal const string MatchAll = "true";
 
     /// <summary>
+    /// The rendered form of <see cref="Filter.None"/>: a filter matching no row. Business
+    /// Central has no boolean-literal filter construct — its supported set is field-and-operator
+    /// only, and a filter with no AL equivalent is an error — so this is never sent. The client
+    /// answers a query carrying it with an empty result and no request at all. The single
+    /// definition of that contract; both <see cref="Filter"/> and the client reference it.
+    /// </summary>
+    internal const string MatchNone = "false";
+
+    /// <summary>
     /// Re-renders this filter for a client that knows whether the endpoint accepts the OData
     /// <c>in</c> operator. <see langword="null"/> for every filter whose text does not depend
     /// on that, which is nearly all of them.
