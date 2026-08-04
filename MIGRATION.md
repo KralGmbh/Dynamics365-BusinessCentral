@@ -490,5 +490,5 @@ There is no deprecation on the path-based API; migrate at your own pace, or not 
 - [ ] Check inherited base classes of system fields against the entity sets that inherit
       them; not every published page exposes them
 - [ ] Re-check chunk sizes on bulk key lookups against `MaxQueryStringLength` (an `or`-chain costs
-      ~4× per key what `in (...)` would)
+      ~2× per key what `in (...)` would — 38 encoded characters against 17 for an 8-character key)
 - [ ] Optionally simplify configuration and drop hand-built `BaseUrl`
