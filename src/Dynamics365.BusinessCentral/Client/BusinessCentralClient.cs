@@ -182,9 +182,15 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
                 "Failed to deserialize Business Central response.",
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (BusinessCentralNotFoundException)
+        catch (BusinessCentralNotFoundException ex) when (!ex.IsTokenAcquisitionFailure)
         {
             // "Does this entity exist" is a question, not an error.
+            //
+            // The filter matters: this try also spans token acquisition, which reports
+            // failures through the same exception hierarchy. Without it, a misconfigured
+            // TokenEndpoint answering 404 was read as "no such entity" and returned as null —
+            // every GetAsync silently empty, with nothing thrown to say authentication never
+            // happened.
             return default;
         }
     }
@@ -385,6 +391,8 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
         int? maxPageSize,
         CancellationToken cancellationToken)
     {
+        EnsureTrustedContinuation(absoluteUrl);
+
         // The nextLink is sent verbatim — it arrives pre-encoded and carries an opaque
         // $skiptoken; rebuilding it would corrupt the cursor. The maxpagesize preference
         // is re-sent because it applies per request, not per cursor.
@@ -395,6 +403,47 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             res,
             "Failed to deserialize Business Central response.",
             cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Rejects an <c>@odata.nextLink</c> that does not share an origin with the configured
+    /// service root, before it is sent.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Continuations are the one URL the client sends that it did not build. They go out
+    /// verbatim and, like every request, carry the bearer token — so a response naming
+    /// <c>https://attacker.example/page</c> would hand that token to whoever answers there,
+    /// and would make the client fetch any host the response chose. Business Central issues
+    /// continuations on the same origin it was asked, so requiring that costs nothing real.
+    /// </para>
+    /// <para>
+    /// Origin, not prefix: scheme, host and port must match
+    /// <c>BusinessCentralOptions.ResolvedBaseUrl</c>. The path is deliberately not compared,
+    /// because a continuation legitimately differs from the request path. Matching the scheme
+    /// is what keeps an <c>https</c> deployment from being talked down to <c>http</c>; a base
+    /// URL that is itself <c>http</c> (an on-premises or test service) is left alone rather
+    /// than broken by a rule its deployment never opted into.
+    /// </para>
+    /// </remarks>
+    private void EnsureTrustedContinuation(string nextLink)
+    {
+        if (Uri.TryCreate(nextLink, UriKind.Absolute, out var link) &&
+            Uri.TryCreate(_options.ResolvedBaseUrl, UriKind.Absolute, out var serviceRoot) &&
+            Uri.Compare(
+                link, serviceRoot,
+                UriComponents.Scheme | UriComponents.HostAndPort,
+                UriFormat.UriEscaped,
+                StringComparison.OrdinalIgnoreCase) == 0)
+        {
+            return;
+        }
+
+        throw new BusinessCentralProtocolException(
+            "Refusing to follow an @odata.nextLink that is not on the configured Business Central " +
+            $"service origin ({_options.ResolvedBaseUrl}). Continuations are sent with the access " +
+            "token, so one pointing elsewhere is not followed.",
+            nextLink);
     }
 
     private HttpRequestMessage CreatePageRequest(string url, int? maxPageSize)

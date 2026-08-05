@@ -573,6 +573,7 @@ client calls, key its policies on this package's exception types — **not** on
 | `BusinessCentralThrottledException` | `429` — the client already honoured `Retry-After` | slow requeue curve |
 | `ex.IsTransient` | any retry-worthy failure | generic transient handling |
 | `ex.IsUrlTooLong` | the query string exceeded `MaxQueryStringLength`; never sent | dead-letter / alert — chunk the input |
+| `ex.IsProtocolViolation` | a continuation pointed off-origin or stopped advancing | dead-letter / alert — the response is at fault |
 | everything else | validation/auth/not-found — retrying cannot help | dead-letter / alert |
 
 A policy keyed on `HttpRequestException` written for 1.x **silently stops matching** on
@@ -596,11 +597,13 @@ for logging; the detail lives on properties, and `ToString()` renders everything
 | `BusinessCentralThrottledException` | `429` |
 | `BusinessCentralConnectionException` | no response — connection failure or client-side timeout; `StatusCode` is `0` |
 | `BusinessCentralUrlTooLongException` | refused before sending: query string past `MaxQueryStringLength`; `StatusCode` is `0`, `Method` empty |
+| `BusinessCentralProtocolException` | refused to follow a bad `@odata.nextLink` — wrong origin, or a cursor that never advances; `StatusCode` is `0`, `Method` empty |
 | `BusinessCentralServerException` | everything else, and deserialization failures |
 
-Two types carry `StatusCode` `0`, because in neither case did a response arrive. Tell them
-apart with `IsConnectionFailure` (the network was tried and failed) and `IsUrlTooLong` (the
-client refused to send).
+Three types carry `StatusCode` `0`, because no HTTP status is associated with the failure
+itself. Tell them apart with `IsConnectionFailure` (the network was tried and failed),
+`IsUrlTooLong` (the client refused to send) and `IsProtocolViolation` (the client refused to
+follow where a response pointed).
 
 ```csharp
 catch (BusinessCentralException ex)
@@ -624,8 +627,14 @@ catch (BusinessCentralException ex) when (ex.IsNotFound)
 }
 ```
 
-`IsNotFound`, `IsThrottled`, `IsValidation`, `IsAuth`, `IsConnectionFailure` and
-`IsTransient` cover the same distinctions as the subtypes, without the trap.
+`IsNotFound`, `IsThrottled`, `IsValidation`, `IsAuth`, `IsConnectionFailure`,
+`IsUrlTooLong`, `IsProtocolViolation` and `IsTransient` cover the same distinctions as the
+subtypes, without the trap.
+
+One more flag cuts across all of them: `IsTokenAcquisitionFailure` is `true` when the failure
+came from the OAuth2 token endpoint rather than from Business Central. Both report through
+this hierarchy, so without it a misconfigured `TokenEndpoint` answering `404` is
+indistinguishable from “no such entity”.
 
 # 📊 Diagnostics
 

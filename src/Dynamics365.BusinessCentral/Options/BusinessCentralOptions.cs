@@ -190,9 +190,10 @@ public sealed class BusinessCentralOptions
     /// </para>
     /// <para>
     /// Past the server's own ceiling Business Central answers <c>414 URI Too Long</c>, which is
-    /// not opaque. The value of failing client-side first is the diagnosis: this throws an
-    /// <see cref="ArgumentException"/> naming the actual length, the limit, the <c>or</c>-clause
-    /// count and <c>Filter.In</c> as the likely cause, before the request leaves the process.
+    /// not opaque. The value of failing client-side first is the diagnosis: this throws a
+    /// <see cref="Errors.BusinessCentralUrlTooLongException"/> naming the actual length, the limit,
+    /// the <c>or</c>-clause count and <c>Filter.In</c> as the likely cause, before the request
+    /// leaves the process.
     /// </para>
     /// <para>
     /// The usual cause is a bulk key lookup. <c>Filter.In</c> renders a same-field

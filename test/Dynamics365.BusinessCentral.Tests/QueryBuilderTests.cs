@@ -223,6 +223,47 @@ public class QueryBuilderTests
         Assert.Contains("$top=0", Decode(urls[0]));
     }
 
+    /// <summary>
+    /// The count is defined by the filter, not by the page window — on both paths. The server
+    /// path already answered the full total for a capped query, because <c>$count</c> is
+    /// independent of <c>$top</c>; the walk-the-collection fallback used to reapply the
+    /// builder's Top and Skip, so <c>.Top(10).CountAsync()</c> answered 10 on an endpoint that
+    /// ignores <c>$count</c> and the real total on one that honours it.
+    /// </summary>
+    [Fact]
+    public async Task CountAsync_Fallback_Ignores_Top_And_Skip()
+    {
+        var urls = new List<string>();
+        var walkCalls = 0;
+
+        // No @odata.count anywhere: this endpoint ignores $count, forcing the fallback.
+        var client = TestBase.CreateClient(TestBase.WithToken(req =>
+        {
+            var url = req.RequestUri!.AbsoluteUri;
+            urls.Add(url);
+
+            // The count probe ($top=0) answers with neither rows nor a count.
+            if (Decode(url).Contains("$top=0"))
+                return TestBase.Json("{\"value\":[]}");
+
+            // The walk that follows: four rows, then three — seven in total.
+            return TestBase.Json(++walkCalls == 1
+                ? "{\"value\":[{\"no\":\"a\"},{\"no\":\"b\"},{\"no\":\"c\"},{\"no\":\"d\"}]," +
+                  "\"@odata.nextLink\":\"https://test/p2\"}"
+                : "{\"value\":[{\"no\":\"e\"},{\"no\":\"f\"},{\"no\":\"g\"}]}");
+        }));
+
+        var count = await client.Query<SalesOrder>().Top(2).Skip(5).CountAsync();
+
+        Assert.Equal(7, count);
+
+        // The count request itself still carries $top=0; the walk that follows carries
+        // neither the builder's cap nor its offset.
+        Assert.Contains("$top=0", Decode(urls[0]));
+        Assert.DoesNotContain("$top=2", Decode(urls[1]));
+        Assert.DoesNotContain("$skip", Decode(urls[1]));
+    }
+
     #endregion
 
     #region Paging and streaming
@@ -357,6 +398,44 @@ public class QueryBuilderTests
 
         // The token cache is shared with the scoped client.
         Assert.Equal(1, tokenCalls);
+    }
+
+    /// <summary>
+    /// A company name is an OData string literal before it is a URL segment, so its quote is
+    /// doubled first and percent-encoded second. Percent-encoding alone produced
+    /// <c>Company('O%27Brien Ltd')</c>, which the server decodes to a bare quote — closing
+    /// the literal early and making every request from that tenant a parse error.
+    /// </summary>
+    [Fact]
+    public async Task Company_Name_With_An_Apostrophe_Is_Escaped_As_An_OData_Literal()
+    {
+        var (client, urls) = Capturing();
+
+        await client.ForCompany("O'Brien Ltd").Query<SalesOrder>().ToListAsync();
+
+        Assert.Contains("Company('O%27%27Brien%20Ltd')", urls[0]);
+
+        // What the server sees after percent-decoding: a doubled quote inside the literal.
+        Assert.Contains("Company('O''Brien Ltd')", Uri.UnescapeDataString(urls[0]));
+    }
+
+    /// <summary>The same escaping applies to the configured company, not just ForCompany.</summary>
+    [Fact]
+    public async Task Configured_Company_With_An_Apostrophe_Is_Escaped()
+    {
+        var urls = new List<string>();
+
+        var client = TestBase.CreateClient(
+            TestBase.WithToken(req =>
+            {
+                urls.Add(req.RequestUri!.AbsoluteUri);
+                return TestBase.Json("{\"value\":[]}");
+            }),
+            configure: o => o.Company = "O'Brien Ltd");
+
+        await client.Query<SalesOrder>().ToListAsync();
+
+        Assert.Contains("Company('O%27%27Brien%20Ltd')", urls[0]);
     }
 
     [Fact]

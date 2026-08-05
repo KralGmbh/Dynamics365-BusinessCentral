@@ -103,8 +103,7 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
                     {
                         var json = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
-                        var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(json, _jsonOptions)
-                                            ?? throw new JsonException("Token response was null.");
+                        var tokenResponse = ReadTokenResponse(json, res, endpoint);
 
                         var expiresAt = DateTime.UtcNow + CacheLifetime(tokenResponse.ExpiresIn);
 
@@ -132,6 +131,11 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
                         RetryHelper.NetworkFailureMessage(ex, "the token endpoint"),
                         HttpMethod.Post.Method, endpoint, ex);
                 }
+
+                // Both surfaces are the same exception hierarchy, so the caller — and
+                // BusinessCentralClient.GetAsync, which swallows a 404 as "no such entity" —
+                // needs to be able to tell a token failure from an answer about the entity.
+                failure.IsTokenAcquisitionFailure = true;
 
                 // The client_credentials grant has no side effects, so replay is
                 // unconditionally safe — none of the POST-ambiguity reasoning from the data
@@ -163,6 +167,89 @@ internal sealed class BusinessCentralTokenProvider : IDisposable
         {
             _tokenLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Parses a <c>200</c> from the token endpoint, failing inside the client's own exception
+    /// contract rather than outside it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two ways a success response can still be unusable. Malformed JSON threw a raw
+    /// <see cref="JsonException"/>, which escaped <see cref="BusinessCentralException"/>
+    /// entirely — a caller doing <c>catch (BusinessCentralException)</c> around every call,
+    /// which is the documented contract, never saw it. And a well-formed body carrying no
+    /// <c>access_token</c> was cached as an empty string, then sent as a bare <c>Bearer</c> on
+    /// every subsequent request, surfacing as a <c>401</c> loop that blames Business Central
+    /// for what the token endpoint did.
+    /// </para>
+    /// <para>
+    /// Both become a <see cref="BusinessCentralServerException"/> carrying the endpoint, but
+    /// deliberately not the raw body: even malformed token responses can contain an access,
+    /// refresh or ID token, and exception/observer payloads routinely enter logs. The status
+    /// is the response's own — a <c>200</c> here is exactly the surprise worth reporting.
+    /// </para>
+    /// <para>
+    /// The redaction is scoped to the success path <b>on purpose</b>. A non-2xx from the token
+    /// endpoint still carries its body, because an OAuth2 error response cannot contain a token
+    /// by construction, and its <c>error</c>/<c>error_description</c> pair (the <c>AADSTS…</c>
+    /// code, for Entra) is the entire diagnosis for a credential or tenant misconfiguration.
+    /// Withholding that would cost the one thing worth having and protect nothing.
+    /// </para>
+    /// </remarks>
+    private TokenResponse ReadTokenResponse(string json, HttpResponseMessage res, string endpoint)
+    {
+        TokenResponse? parsed;
+
+        try
+        {
+            parsed = JsonSerializer.Deserialize<TokenResponse>(json, _jsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            throw TokenResponseFailure(
+                "Could not parse the response from the token endpoint.", res, endpoint, ex);
+        }
+
+        if (parsed is null)
+            throw TokenResponseFailure("The token endpoint returned an empty response.", res, endpoint);
+
+        if (string.IsNullOrWhiteSpace(parsed.AccessToken))
+        {
+            throw TokenResponseFailure(
+                "The token endpoint returned a response with no access_token.", res, endpoint);
+        }
+
+        return parsed;
+    }
+
+    private BusinessCentralServerException TokenResponseFailure(
+        string message,
+        HttpResponseMessage res,
+        string endpoint,
+        Exception? inner = null)
+    {
+        var failure = new BusinessCentralServerException(
+            message, res.StatusCode, HttpMethod.Post.Method, endpoint, null, null, null, inner)
+        {
+            IsTokenAcquisitionFailure = true
+        };
+
+        // Reported as the failure itself, not as the inner JsonException: a missing
+        // access_token has no inner exception at all, and BusinessCentralErrorInfo.Exception
+        // is not nullable.
+        _observer.OnDeserializationFailed(new BusinessCentralErrorInfo
+        {
+            Method = HttpMethod.Post.Method,
+            Url = endpoint,
+            StatusCode = (int)res.StatusCode,
+            // Never expose an identity-provider response through diagnostics: malformed JSON
+            // can still contain credential material that must not reach logs.
+            ResponseBody = null,
+            Exception = failure
+        });
+
+        return failure;
     }
 
     /// <summary>
