@@ -198,6 +198,50 @@ public class PagingGuardTests
     }
 
     /// <summary>
+    /// The rejection message must name the origin that was compared, not <c>BaseUrl</c>. A real
+    /// BaseUrl carries a path (<c>…/v2.0/{tenant}/{environment}/ODataV4</c>) that this check
+    /// deliberately ignores, so printing it would send a reader comparing the one part that is
+    /// allowed to differ.
+    /// </summary>
+    [Fact]
+    public async Task Foreign_Origin_Message_Names_The_Origin_Not_The_Base_Url()
+    {
+        var client = TestBase.CreateClient(
+            TestBase.WithToken(_ => TestBase.Json(
+                "{\"value\":[{\"no\":\"a\"}],\"@odata.nextLink\":\"https://attacker.example/p2\"}")),
+            configure: o => o.BaseUrl = "https://test/v2.0/tenant/Production/ODataV4");
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralProtocolException>(
+            () => client.Query<SalesOrder>().ToAllAsync());
+
+        Assert.Contains("https://test)", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("ODataV4", ex.Message, StringComparison.Ordinal);
+
+        // And it says which components were compared, so "but the paths differ" is not the
+        // conclusion a reader reaches.
+        Assert.Contains("scheme, host and port", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The non-advancing-cursor message must not send the caller after a correlation ID: this
+    /// is thrown on a successful page, and the client only ever parses one out of an OData
+    /// error body, so there is none to find.
+    /// </summary>
+    [Fact]
+    public async Task Non_Advancing_Cursor_Message_Offers_Only_Actionable_Diagnostics()
+    {
+        var client = TestBase.CreateClient(TestBase.WithToken(_ => TestBase.Json(
+            "{\"value\":[{\"no\":\"a\"}],\"@odata.nextLink\":\"https://test/stuck\"}")));
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralProtocolException>(
+            () => client.Query<SalesOrder>().ToAllAsync());
+
+        Assert.DoesNotContain("correlation", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(ex.CorrelationId);
+        Assert.Equal("https://test/stuck", ex.RequestUrl);
+    }
+
+    /// <summary>
     /// Same origin, different path, is the normal shape of a continuation and stays allowed —
     /// the check compares scheme, host and port, not the path.
     /// </summary>

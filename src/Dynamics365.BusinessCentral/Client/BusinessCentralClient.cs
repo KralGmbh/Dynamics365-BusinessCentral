@@ -428,8 +428,11 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
     /// </remarks>
     private void EnsureTrustedContinuation(string nextLink)
     {
-        if (Uri.TryCreate(nextLink, UriKind.Absolute, out var link) &&
-            Uri.TryCreate(_options.ResolvedBaseUrl, UriKind.Absolute, out var serviceRoot) &&
+        var serviceRootParsed =
+            Uri.TryCreate(_options.ResolvedBaseUrl, UriKind.Absolute, out var serviceRoot);
+
+        if (serviceRootParsed &&
+            Uri.TryCreate(nextLink, UriKind.Absolute, out var link) &&
             Uri.Compare(
                 link, serviceRoot,
                 UriComponents.Scheme | UriComponents.HostAndPort,
@@ -439,10 +442,19 @@ public sealed class BusinessCentralClient : IBusinessCentralClient, IBusinessCen
             return;
         }
 
+        // The origin, not BaseUrl. BaseUrl carries a path
+        // (…/v2.0/{tenant}/{environment}/ODataV4) that this check deliberately ignores, so
+        // printing it would send a reader comparing paths — the one part that is allowed to
+        // differ. The message names exactly what was compared.
+        var expectedOrigin = serviceRootParsed
+            ? serviceRoot!.GetLeftPart(UriPartial.Authority)
+            : _options.ResolvedBaseUrl;
+
         throw new BusinessCentralProtocolException(
-            "Refusing to follow an @odata.nextLink that is not on the configured Business Central " +
-            $"service origin ({_options.ResolvedBaseUrl}). Continuations are sent with the access " +
-            "token, so one pointing elsewhere is not followed.",
+            $"Refusing to follow an @odata.nextLink outside the configured service origin " +
+            $"({expectedOrigin}). Only the scheme, host and port are compared; the path may " +
+            "differ. Continuations are sent with the access token, so one pointing elsewhere " +
+            "is not followed.",
             nextLink);
     }
 

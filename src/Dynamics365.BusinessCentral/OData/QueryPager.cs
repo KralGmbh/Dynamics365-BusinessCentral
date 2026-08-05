@@ -76,11 +76,15 @@ internal static class QueryPager
             // Both self-loops and longer cycles land here.
             if (!visited.Add(nextLink))
             {
+                // No correlation ID to offer: this is thrown on a *successful* page, and the
+                // client only ever parses one out of an OData error body. The rejected cursor
+                // on RequestUrl and an observer's request log are what a caller actually has.
                 throw new BusinessCentralProtocolException(
                     "Business Central returned an @odata.nextLink that has already been followed, " +
                     "so paging is not advancing. Following it again would repeat rows already " +
-                    "returned. Retry the query; if it persists, the correlation ID from the page " +
-                    "request identifies it to Microsoft support.",
+                    "returned, and stopping here could hide rows never returned. The repeated " +
+                    "cursor is on RequestUrl; register an IBusinessCentralObserver to capture the " +
+                    "full sequence of page requests that led to it.",
                     nextLink);
             }
 
