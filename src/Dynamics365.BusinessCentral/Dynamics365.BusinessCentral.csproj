@@ -7,7 +7,7 @@
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>2.0.0-alpha.7</Version>
+        <Version>2.0.0-rc.1</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
 
@@ -35,38 +35,38 @@
         <!-- Shown on the nuget.org package page. Kept short and pointed at CHANGELOG.md
              rather than duplicated, since nuget.org renders this as plain text. -->
         <PackageReleaseNotes>
-            PRERELEASE — 2.0.0-alpha.7 adds the URL-length guard and corrects an alpha.6
-            claim about the derived $select.
+            RELEASE CANDIDATE — 2.0.0-rc.1 is the 2.0.0 surface, frozen. Please exercise it
+            against a real tenant and report anything that differs from the documentation;
+            no further API changes are planned before stable.
 
-            BusinessCentralOptions.MaxQueryStringLength (default 8000) refuses an over-long
-            request before it is sent, so the failure names the filter that caused it rather
-            than arriving as a bare 414 URI Too Long from the gateway;
-            QueryStringLengthWarningThreshold (default 6000) reports long query strings
-            through the new IBusinessCentralObserver.OnUrlLengthWarning while still sending
-            them, so a deployment can measure before it tunes. Both measure the query string,
-            not the whole URL. Bulk key lookups are the case that matters: Filter.In renders
-            an or-chain, which costs about twice per key what "in (...)" would.
+            This build fixes six defects found in an external review of the whole solution.
+            Two produce a wrong answer rather than an error, so read these two even if you
+            read nothing else:
 
-            Over the limit the client throws BusinessCentralUrlTooLongException, which derives
-            from BusinessCentralException like every other failure and carries the lengths, the
-            limit and the or-clause count as properties.
+            A company name containing an apostrophe built an unparseable URL. It was
+            percent-encoded but never escaped as an OData string literal, so O'Brien Ltd went
+            out as Company('O%27Brien Ltd') — which decodes to a bare quote and ends the
+            literal early. Every request from such a tenant failed.
 
-            Filters Business Central cannot answer are no longer sent. It has no boolean-literal
-            filter, so Filter.In(field, []) now short-circuits to an empty result with no request
-            at all, and Filter.All composed with anything reduces away instead of going out as
-            "(true) and (...)".
+            GetAsync swallowed a 404 from the token endpoint. Its catch spans token
+            acquisition, so a misconfigured TokenEndpoint answering 404 was read as "no such
+            entity" and returned as null — every read silently empty, nothing thrown to say
+            authentication never happened.
 
-            Also: a 400 caused by the derived $select now explains where the projection came
-            from and how to opt out, and the companion Testing package ships
-            BusinessCentralMetadata.AssertProjectionsResolveAsync — one assertion that checks
-            every entity type's derived $select against a tenant's live $metadata and reports
-            every unresolved name at once.
+            Also fixed: an @odata.nextLink is now followed only on the configured service
+            origin, because continuations are sent verbatim and carry the access token; a
+            continuation cursor that repeats throws instead of looping or truncating;
+            CountAsync returns the same number whether or not the endpoint honours $count
+            (Top and Skip never narrow a count); and a malformed 200 from the token endpoint
+            fails inside BusinessCentralException instead of leaking a raw JsonException,
+            without copying the identity provider's body into logs.
 
-            IMPORTANT — a property mapping to no Business Central column fails such a query
-            outright, which alpha.6's documentation wrongly described as merely surfacing
-            existing drift. alpha.6 also claimed $select was case-sensitive server-side;
-            live-tenant measurement showed the opposite, and that claim is retracted. See
-            MIGRATION.md before upgrading from alpha.6.
+            New: BusinessCentralProtocolException with the IsProtocolViolation predicate, and
+            BusinessCentralException.IsTokenAcquisitionFailure to tell a token-endpoint
+            failure from an answer about the entity.
+
+            Behaviour changes that are silent by nature — a ToAllAsync that starts throwing
+            was previously returning a possibly truncated result — are listed in MIGRATION.md.
 
             Breaking changes — see the migration guide before upgrading:
             https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/MIGRATION.md
@@ -77,6 +77,20 @@
 
         <!-- Ship XML docs so consumers get IntelliSense for the public API. -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+        <!-- Package validation: compares the packed API surface against the last published
+             version and fails the pack on a breaking change. Strict mode also catches the
+             asymmetric case — a member present on one TFM but not another, which compiles
+             fine and breaks a consumer who multi-targets.
+
+             The baseline is a moving pin: bump it to the previous *stable* on every release
+             once 2.0.0 ships. Until then it points at the last prerelease, which is what
+             makes the rc a real freeze rather than a label. Note this needs the baseline
+             package to be restorable, so an offline build must pass
+             /p:DisablePackageBaselineValidation=true. -->
+        <EnablePackageValidation>true</EnablePackageValidation>
+        <PackageValidationBaselineVersion>2.0.0-alpha.7</PackageValidationBaselineVersion>
+        <EnableStrictModeForCompatibleTfms>true</EnableStrictModeForCompatibleTfms>
 
         <!-- SourceLink is built into the .NET 8+ SDK; these make the snupkg actually
              usable for step-into debugging. -->

@@ -7,6 +7,116 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0-rc.1] - 2026-08-05
+
+**Release candidate.** The 2.0.0 surface, frozen — no further API changes are planned before
+stable, and both packages now fail their own `pack` on a breaking change (see *Added* below).
+What remains before `2.0.0` is validation, not development: exercise this against a real
+tenant and report anything that contradicts the documentation.
+
+Six findings from an external full-solution review, all confirmed against the code before
+being fixed. Two of them — the company-name escaping and the swallowed token `404` — are
+correctness bugs that produce a wrong answer rather than an error.
+
+### Added
+
+- **`BusinessCentralProtocolException`** and the `IsProtocolViolation` predicate. Raised when
+  the client refuses to act on a continuation: see *Security* and *Fixed* below. `StatusCode`
+  is `0` and `Method` is empty, like `BusinessCentralUrlTooLongException` — both are refusals
+  to send rather than results of sending. `RequestUrl` carries the offending `@odata.nextLink`.
+
+- **`BusinessCentralException.IsTokenAcquisitionFailure`**, `true` when a failure came from the
+  OAuth2 token endpoint rather than from Business Central. Both report through the same
+  hierarchy, so nothing could previously tell them apart.
+
+### Security
+
+- **An `@odata.nextLink` is followed only on the configured service origin.** Continuations are
+  the one URL the client sends that it did not build: they go out verbatim and, like every
+  request, carry the bearer token. A response naming `https://attacker.example/page` would
+  therefore have disclosed the token to whoever answered there, and made the client fetch any
+  host the response chose. Scheme, host and port must now match
+  `BusinessCentralOptions.ResolvedBaseUrl`, or a `BusinessCentralProtocolException` is thrown
+  before the request is sent.
+
+  Origin, not prefix — the path is deliberately not compared, because a continuation
+  legitimately differs from the request path. Matching the scheme is what stops an `https`
+  deployment being talked down to `http`; a base URL that is itself `http` (on-premises, or a
+  test service) is left alone rather than broken by a rule its deployment never opted into.
+  Business Central issues continuations on the origin it was asked, so this costs nothing real.
+
+### Fixed
+
+- **Company names containing an apostrophe produced an unparseable URL.** The company was
+  percent-encoded but never escaped as an OData string literal first, so `O'Brien Ltd` became
+  `Company('O%27Brien Ltd')` — and `%27` decodes to a bare quote before the OData parser sees
+  it, ending the literal at the wrong place. The quote is now doubled first and encoded second:
+  `Company('O%27%27Brien%20Ltd')`. Affects the configured `Company`, `ForCompany(...)` and any
+  name returned by `GetCompaniesAsync`. Every request from such a tenant failed.
+
+- **`GetAsync` no longer swallows a `404` from the token endpoint.** Its `try` spans token
+  acquisition as well as the entity request, and the token provider reports through the same
+  exception hierarchy — so a misconfigured `TokenEndpoint` answering `404` was read as "no such
+  entity" and returned as `null`. Every read came back silently empty, with nothing thrown to
+  say authentication had never happened. Only a `404` from the entity request itself is
+  swallowed now; the entity's own `404` is still a `null`, which is the point of the catch.
+
+- **A continuation cursor that repeats now throws instead of looping.** The no-progress guard
+  required an *empty* page, on the stated reasoning that a repeated cursor carrying rows was
+  legitimate. It is not: re-fetching it returns the page already emitted, so an uncapped
+  `StreamAsync`/`ToAllAsync` repeated those rows forever. Every cursor followed is now tracked,
+  which also catches cycles longer than one (`A → B → A`), and a repeat throws
+  `BusinessCentralProtocolException`. Empty repeated pages throw too: a nextLink asserts that
+  continuation remains, so stopping quietly would report a potentially truncated result as
+  success.
+
+- **`CountAsync` answers the same number on both paths.** The server path sends `$top=0` and
+  gets the count of everything the filter matches, because `$count` is independent of the page
+  window; the walk-the-collection fallback — used when an endpoint ignores `$count` — reapplied
+  the builder's `Top` and `Skip`. `.Top(10).CountAsync()` therefore returned the full total on
+  one endpoint and `10` on another. The fallback now walks unpaged. **`Top` and `Skip` do not
+  narrow a count**, on either path.
+
+- **A malformed `200` from the token endpoint stays inside the exception contract.** Unparseable
+  JSON threw a raw `JsonException`, straight through the documented
+  `catch (BusinessCentralException)`; a well-formed body carrying no `access_token` was cached
+  as an empty string and then sent as a bare `Bearer` header, surfacing as a `401` loop that
+  blamed Business Central for what the token endpoint did. Both are now a
+  `BusinessCentralServerException` carrying the endpoint, and neither is cached. The raw token
+  response is deliberately omitted from exceptions and observer events because malformed JSON
+  can still contain access, refresh or ID tokens that must not enter logs. That redaction is
+  scoped to the success path: a non-2xx from the token endpoint still carries its body, since
+  an OAuth2 error response cannot contain a token and its `error_description` (the `AADSTS…`
+  code) is the whole diagnosis for a credential misconfiguration.
+
+### Added — release infrastructure
+
+- **Package validation on both packages.** `EnablePackageValidation` compares the packed API
+  surface against `PackageValidationBaselineVersion` and fails `pack` on a breaking change;
+  `EnableStrictModeForCompatibleTfms` also catches a member present on one target framework
+  but not another — which compiles cleanly and breaks any consumer who multi-targets. The
+  baseline is a moving pin: bump it to the previous stable on each release. An offline build
+  needs `/p:DisablePackageBaselineValidation=true`, since the baseline is restored from
+  nuget.org.
+
+  This is what makes "release candidate" mean something. Two public members were added during
+  the review above without anyone noticing until the surface was diffed by hand.
+
+- **A `LICENSE` file at the repository root.** Both packages have always declared
+  `PackageLicenseExpression=MIT` — so nuget.org rendered the licence correctly — but the
+  repository itself had none, which is a genuine adoption blocker for anyone whose legal
+  review reads the repo rather than the package.
+
+### Documentation
+
+- `MaxQueryStringLength` said the guard throws `ArgumentException`. It has thrown
+  `BusinessCentralUrlTooLongException` since alpha.7.
+
+- The `⚠️ Inconclusive` note on server-driven paging under **[2.0.0-alpha]** now says it was
+  superseded. It has read as an open question ever since, and it is not one: the probe behind
+  it used the old client's `$top=1000` pacing, which never exceeded the server's page size and
+  so never gave the server cause to emit a `nextLink`. See the annotation there.
+
 ## [2.0.0-alpha.7] - 2026-08-04
 
 **Prerelease.** The URL-length guard (from the pre-stable review, sharpened by the
@@ -694,10 +804,21 @@ Known gaps in this prerelease, to be confirmed before 2.0.0 stable
   `PATCH`, so the header is redundant there (and harmless). The `204` path remains as a
   safety net; `POST` echo behaviour was left untested by choice (it would require creating
   a real record).
-- ⚠️ **Inconclusive 2026-07-30**: server-driven `@odata.nextLink` paging. A 118k-row query
-  against an `ODataV4` published-page endpoint did not produce server-driven paging;
-  those endpoints may not emit `nextLink` at all, unlike `/api/v2.0`. The nextLink
-  handling remains covered by tests but unobserved in the wild.
+- ⚠️ **Inconclusive 2026-07-30** — ✅ **superseded the same day; see [2.0.0-alpha.5]**:
+  server-driven `@odata.nextLink` paging. A 118k-row query against an `ODataV4`
+  published-page endpoint did not produce server-driven paging; those endpoints may not emit
+  `nextLink` at all, unlike `/api/v2.0`. The nextLink handling remains covered by tests but
+  unobserved in the wild.
+
+  *Superseding note (added 2026-08-05).* The conclusion above was wrong, and the reason is
+  worth keeping: that probe ran through the **old client's `$top=1000` pacing**, so no request
+  ever asked for more rows than the server's 20,000-row Max Page Size — the server had no
+  cause to truncate, and therefore none to emit a `nextLink`. The absence measured the client,
+  not the endpoint. The nextLink measurement round re-probed directly: with no `$top` the
+  endpoint returned ~20,000 rows **and an open `$skiptoken` cursor**, and with
+  `Prefer: odata.maxpagesize=1000` it returned exactly 1,000 rows and a cursor. Published-page
+  endpoints do server-drive paging. That measurement is what [2.0.0-alpha.5] was built on, and
+  the README's "verified against a live BC SaaS tenant" refers to it.
 
 ## [1.0.0] - 2026-01-20
 
@@ -721,6 +842,13 @@ First stable release.
 Initial pre-release line: OData querying with fluent filters, client-credentials
 authentication, DI integration, multi-targeting and NuGet packaging.
 
-[Unreleased]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-alpha...HEAD
+[Unreleased]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-rc.1...HEAD
+[2.0.0-rc.1]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-alpha.7...v2.0.0-rc.1
+[2.0.0-alpha.7]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-alpha.6...v2.0.0-alpha.7
+[2.0.0-alpha.6]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-alpha.5...v2.0.0-alpha.6
+[2.0.0-alpha.5]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-alpha.4...v2.0.0-alpha.5
+[2.0.0-alpha.4]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-alpha.3...v2.0.0-alpha.4
+[2.0.0-alpha.3]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-alpha.2...v2.0.0-alpha.3
+[2.0.0-alpha.2]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-alpha...v2.0.0-alpha.2
 [2.0.0-alpha]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v1.0.0...v2.0.0-alpha
 [1.0.0]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v0.1.10...v1.0.0

@@ -45,6 +45,16 @@ public abstract class BusinessCentralException : Exception
     public TimeSpan? RetryAfter { get; internal set; }
 
     /// <summary>
+    /// The failure happened while acquiring the OAuth2 token, not while calling Business
+    /// Central. The two share this exception hierarchy, so without this flag a misconfigured
+    /// <c>TokenEndpoint</c> is indistinguishable from an answer about the entity: a token
+    /// endpoint returning <c>404</c> produced a
+    /// <see cref="BusinessCentralNotFoundException"/> that <c>GetAsync</c> read as "no such
+    /// entity" and swallowed into a <see langword="null"/>.
+    /// </summary>
+    public bool IsTokenAcquisitionFailure { get; internal set; }
+
+    /// <summary>
     /// Whether retrying the same request could plausibly succeed. <see langword="true"/> for
     /// throttling and transient server failures, <see langword="false"/> for validation,
     /// authentication and not-found errors.
@@ -73,9 +83,8 @@ public abstract class BusinessCentralException : Exception
     /// <summary>No response was received: connection failure or client-side timeout.</summary>
     /// <remarks>
     /// Matches on the exception type rather than on <see cref="StatusCode"/> being <c>0</c>.
-    /// Both no-response types carry status <c>0</c> — the other being
-    /// <see cref="BusinessCentralUrlTooLongException"/>, which is a refusal to send rather
-    /// than a failure to reach — and only this one means the network was actually tried.
+    /// Several pre-response or protocol failures carry status <c>0</c>; matching the subtype
+    /// ensures only a connection failure or timeout is classified as a network failure.
     /// </remarks>
     public bool IsConnectionFailure => this is BusinessCentralConnectionException;
 
@@ -85,6 +94,13 @@ public abstract class BusinessCentralException : Exception
     /// produces the same length every time.
     /// </summary>
     public bool IsUrlTooLong => this is BusinessCentralUrlTooLongException;
+
+    /// <summary>
+    /// The response broke the OData contract in a way the client refused to act on — a
+    /// continuation pointing somewhere other than the configured service, or one that never
+    /// advances. Never transient: the same response repeats the same violation.
+    /// </summary>
+    public bool IsProtocolViolation => this is BusinessCentralProtocolException;
 
     /// <summary>Creates a new <see cref="BusinessCentralException"/>.</summary>
     /// <param name="message">Short, single-line description of the failure.</param>
@@ -125,9 +141,8 @@ public abstract class BusinessCentralException : Exception
             ? $"Business Central request failed."
             : message.Trim().ReplaceLineEndings(" ");
 
-        // A request refused before it was built has no method to name, and its message
-        // already says what happened — decorating it with "( → no response)" would only
-        // add noise. Only BusinessCentralUrlTooLongException takes this branch.
+        // A client-side refusal has no method to name, and its message already says what
+        // happened — decorating it with "( → no response)" would only add noise.
         if (string.IsNullOrEmpty(method))
             return trimmed;
 
@@ -148,7 +163,9 @@ public abstract class BusinessCentralException : Exception
         sb.AppendLine();
         sb.AppendLine("--- Business Central details ---");
         sb.AppendLine(StatusCode == 0
-            ? "Status: (no response received)"
+            ? IsConnectionFailure
+                ? "Status: (no response received)"
+                : "Status: (no HTTP status associated)"
             : $"Status: {(int)StatusCode} {StatusCode}");
         sb.AppendLine($"Method: {Method}");
         sb.AppendLine($"URL: {RequestUrl}");
@@ -362,6 +379,46 @@ public sealed class BusinessCentralUrlTooLongException : BusinessCentralExceptio
         Limit = limit;
         OrClauseCount = orClauseCount;
     }
+}
+
+/// <summary>
+/// The client refused to act on a response that broke the OData contract. Never transient.
+/// <see cref="BusinessCentralException.StatusCode"/> is <c>0</c> and
+/// <see cref="BusinessCentralException.Method"/> is empty, because this is a refusal to send
+/// the *next* request rather than the result of one.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Raised for two continuation faults, both of which would otherwise turn a bad response
+/// into something worse than an error:
+/// </para>
+/// <list type="bullet">
+/// <item><description>
+/// An <c>@odata.nextLink</c> whose origin is not the configured service root. Continuations
+/// are sent verbatim and carry the bearer token, so following one to another host would
+/// disclose the token and turn the client into an SSRF vector on behalf of whoever wrote
+/// the response.
+/// </description></item>
+/// <item><description>
+/// A continuation cursor that has already been followed. When its page carried rows,
+/// refetching yields the page already emitted, so an uncapped stream would repeat those rows
+/// forever. When the page was empty the fault is the opposite one: a <c>nextLink</c> asserts
+/// that continuation remains, so the client cannot conclude the collection is complete —
+/// stopping quietly would hand back a possibly truncated result as success. Neither is
+/// something the caller can be left to notice, so both throw.
+/// </description></item>
+/// </list>
+/// <para>
+/// <see cref="BusinessCentralException.RequestUrl"/> carries the offending continuation.
+/// </para>
+/// </remarks>
+public sealed class BusinessCentralProtocolException : BusinessCentralException
+{
+    /// <summary>Creates a new <see cref="BusinessCentralProtocolException"/>.</summary>
+    /// <param name="message">Short, single-line description of the violation.</param>
+    /// <param name="requestUrl">The continuation URL that was rejected.</param>
+    public BusinessCentralProtocolException(string message, string? requestUrl)
+        : base(message, 0, string.Empty, requestUrl, null, null, null, null) { }
 }
 
 internal sealed class BusinessCentralODataError

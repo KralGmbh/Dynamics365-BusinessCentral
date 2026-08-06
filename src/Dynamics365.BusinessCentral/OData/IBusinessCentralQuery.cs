@@ -122,6 +122,13 @@ public interface IBusinessCentralQuery<TEntity>
     /// page. It is a correctness guarantee, not a performance one.
     /// </para>
     /// <para>
+    /// <b><see cref="Top"/> and <see cref="Skip"/> do not narrow the count.</b> It counts
+    /// everything the filter matches, on both paths — the server one because <c>$count</c> is
+    /// independent of the page window, and the fallback because it deliberately walks the set
+    /// unpaged to match. <c>.Top(10).CountAsync()</c> therefore returns the full total, not
+    /// <c>10</c>.
+    /// </para>
+    /// <para>
     /// If the cost matters more than the exact number, prefer a bounded probe — a
     /// <c>Top(n)</c> read whose length you inspect — or verify once that your endpoint honours
     /// <c>$count</c> before relying on this in a hot path.

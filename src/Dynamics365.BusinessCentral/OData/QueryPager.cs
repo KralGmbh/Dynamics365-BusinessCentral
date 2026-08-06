@@ -1,3 +1,4 @@
+using Dynamics365.BusinessCentral.Errors;
 using System.Runtime.CompilerServices;
 
 namespace Dynamics365.BusinessCentral.OData;
@@ -22,6 +23,11 @@ namespace Dynamics365.BusinessCentral.OData;
 /// <c>limit</c> (<c>$top</c> semantics) caps emitted rows, enforced mid-page client-side
 /// and also sent to the server so it never over-serves a capped query.
 /// </para>
+/// <para>
+/// Continuation is trusted only as far as it advances: a cursor that has already been
+/// followed throws <see cref="BusinessCentralProtocolException"/> rather than replaying the
+/// rows it produced the first time.
+/// </para>
 /// </remarks>
 internal static class QueryPager
 {
@@ -40,9 +46,10 @@ internal static class QueryPager
 
         var page = await fetchFirstPage(limit, initialSkip, cancellationToken).ConfigureAwait(false);
 
-        // The cursor that produced the page in hand, so a server that fails to advance it
-        // cannot spin this loop forever.
-        string? followed = null;
+        // Every cursor already followed. A single previous-cursor check would catch only a
+        // self-loop; a cycle (A → B → A) needs the whole history. Bounded by page count, which
+        // at BC's page sizes is small even for a full-table stream.
+        var visited = new HashSet<string>(StringComparer.Ordinal);
 
         while (true)
         {
@@ -58,24 +65,30 @@ internal static class QueryPager
 
             // No continuation means the collection (or the caller's $top budget) is
             // exhausted — BC offers a nextLink on every page it truncates.
-            if (string.IsNullOrWhiteSpace(page.NextLink))
+            var nextLink = page.NextLink;
+            if (string.IsNullOrWhiteSpace(nextLink))
                 yield break;
 
-            // No-progress guard. An empty page whose nextLink is the cursor we just followed
-            // would return the same empty page forever; following it again cannot produce a
-            // row that following it once did not. Terminating therefore loses nothing, which
-            // is why this stops rather than throws. Both conditions are required: an empty
-            // page with a *new* cursor is legitimate (a page whose every row was filtered
-            // server-side), and so is a repeated cursor that still carried rows.
-            if (page.Value.Count == 0 &&
-                string.Equals(page.NextLink, followed, StringComparison.Ordinal))
+            // Every repeated cursor is a protocol fault, whether or not this page carried
+            // rows. A nextLink asserts that continuation remains; an empty page does not let
+            // the client conclude the result is complete. Stopping quietly would report a
+            // potentially truncated result as success, while following it can loop forever.
+            // Both self-loops and longer cycles land here.
+            if (!visited.Add(nextLink))
             {
-                yield break;
+                // No correlation ID to offer: this is thrown on a *successful* page, and the
+                // client only ever parses one out of an OData error body. The rejected cursor
+                // on RequestUrl and an observer's request log are what a caller actually has.
+                throw new BusinessCentralProtocolException(
+                    "Business Central returned an @odata.nextLink that has already been followed, " +
+                    "so paging is not advancing. Following it again would repeat rows already " +
+                    "returned, and stopping here could hide rows never returned. The repeated " +
+                    "cursor is on RequestUrl; register an IBusinessCentralObserver to capture the " +
+                    "full sequence of page requests that led to it.",
+                    nextLink);
             }
 
-            followed = page.NextLink;
-
-            page = await fetchNextPage(followed!, cancellationToken).ConfigureAwait(false);
+            page = await fetchNextPage(nextLink, cancellationToken).ConfigureAwait(false);
         }
     }
 }

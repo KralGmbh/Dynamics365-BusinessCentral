@@ -31,6 +31,8 @@ public sealed class TestObserver : IBusinessCentralObserver
 
     public readonly List<BusinessCentralUrlLengthInfo> UrlWarnings = [];
 
+    public readonly List<BusinessCentralErrorInfo> DeserializationFailures = [];
+
     public void OnUrlLengthWarning(BusinessCentralUrlLengthInfo info)
     {
         Events.Add($"url-length:{info.QueryStringLength}");
@@ -38,5 +40,8 @@ public sealed class TestObserver : IBusinessCentralObserver
     }
 
     public void OnDeserializationFailed(BusinessCentralErrorInfo info)
-        => Events.Add("deserialization-failed");
+    {
+        Events.Add("deserialization-failed");
+        DeserializationFailures.Add(info);
+    }
 }

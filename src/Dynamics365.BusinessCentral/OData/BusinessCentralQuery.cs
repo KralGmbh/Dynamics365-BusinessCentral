@@ -174,21 +174,39 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
     public async IAsyncEnumerable<TEntity> StreamAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        await foreach (var entity in StreamCoreAsync(_top, _skip ?? 0, cancellationToken).ConfigureAwait(false))
+            yield return entity;
+    }
+
+    /// <summary>
+    /// Streams every row the filter matches, ignoring the builder's <c>Top</c> and
+    /// <c>Skip</c>. Used only by <see cref="CountAsync"/>'s fallback, whose answer must not
+    /// depend on the page window — see the comment there.
+    /// </summary>
+    private async IAsyncEnumerable<TEntity> StreamUnpagedAsync(
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var entity in StreamCoreAsync(null, 0, cancellationToken).ConfigureAwait(false))
+            yield return entity;
+    }
+
+    private IAsyncEnumerable<TEntity> StreamCoreAsync(
+        int? limit,
+        int skip,
+        CancellationToken cancellationToken)
+    {
         // The paging state machine lives in QueryPager, shared with the path-based
         // QueryStreamAsync; only the fetch delegates differ. Paging is server-driven: the
         // per-query PageSize (else the registration-level MaxPageSize, else nothing) is
         // sent as Prefer: odata.maxpagesize and continuation follows @odata.nextLink.
         var maxPageSize = _pageSize ?? _executor.DefaultMaxPageSize;
 
-        var stream = QueryPager.StreamAsync(
-            _top,
-            _skip ?? 0,
-            (top, skip, ct) => FetchAsync(top, skip, maxPageSize, ct),
+        return QueryPager.StreamAsync(
+            limit,
+            skip,
+            (top, offset, ct) => FetchAsync(top, offset, maxPageSize, ct),
             (link, ct) => _executor.FetchNextPageAsync<TEntity>(link, maxPageSize, ct),
             cancellationToken);
-
-        await foreach (var entity in stream.ConfigureAwait(false))
-            yield return entity;
     }
 
     private Task<ODataResponse<TEntity>> FetchAsync(
@@ -263,9 +281,16 @@ internal sealed class BusinessCentralQuery<TEntity> : IBusinessCentralQuery<TEnt
         // path CountAsync's remarks warn about: it pages the whole set to produce one number.
         // Kept because a wrong count is worse than a slow one, but it is why the interface
         // documents "without fetching them" as conditional rather than as a guarantee.
+        //
+        // The walk deliberately ignores Top and Skip, because $count does: the server path
+        // above sends $top=0 and gets the count of everything the filter matches, so a walk
+        // honouring the builder's paging would make .Top(10).CountAsync() answer 10 here and
+        // the full total there — the same query returning different numbers depending on
+        // which endpoint served it. The filter is what defines the count; the page window
+        // is not part of it.
         var walked = 0L;
 
-        await foreach (var _ in StreamAsync(cancellationToken).ConfigureAwait(false))
+        await foreach (var _ in StreamUnpagedAsync(cancellationToken).ConfigureAwait(false))
             walked++;
 
         return walked;

@@ -61,6 +61,19 @@ public class ExceptionPredicateTests
         Assert.True(ex.IsConnectionFailure);
         Assert.True(ex.IsTransient);
         Assert.False(ex.IsNotFound);
+        Assert.Contains("Status: (no response received)", ex.ToString());
+    }
+
+    [Fact]
+    public void Protocol_Violation_Uses_A_Neutral_Status_Description()
+    {
+        var ex = new BusinessCentralProtocolException("x", "https://example.test/next");
+
+        Assert.True(ex.IsProtocolViolation);
+        Assert.False(ex.IsConnectionFailure);
+        Assert.False(ex.IsTransient);
+        Assert.Contains("Status: (no HTTP status associated)", ex.ToString());
+        Assert.DoesNotContain("no response received", ex.ToString());
     }
 
     [Fact]

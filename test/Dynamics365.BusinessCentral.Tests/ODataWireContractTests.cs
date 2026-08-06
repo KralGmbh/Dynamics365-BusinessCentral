@@ -1,3 +1,4 @@
+using Dynamics365.BusinessCentral.Errors;
 using Dynamics365.BusinessCentral.OData;
 using Dynamics365.BusinessCentral.Options;
 using Dynamics365.BusinessCentral.Tests.Utils;
@@ -286,11 +287,11 @@ public class ODataWireContractTests : TestBase
     #region Paging
 
     /// <summary>
-    /// A server that hands back the cursor just followed, on a page with no rows, cannot be
-    /// advanced by following it again — so the pager stops instead of spinning forever.
+    /// A server that hands back the cursor just followed, even on an empty page, has violated
+    /// the continuation contract. Throw rather than spinning or reporting a truncated success.
     /// </summary>
     [Fact]
-    public async Task Pager_Stops_When_The_Cursor_Stops_Advancing()
+    public async Task Pager_Throws_When_The_Cursor_Stops_Advancing()
     {
         var requests = 0;
 
@@ -304,9 +305,8 @@ public class ODataWireContractTests : TestBase
                 : """{"value":[],"@odata.nextLink":"https://test/next"}""");
         }));
 
-        var rows = await client.Query<SalesOrder>().ToAllAsync();
-
-        Assert.Single(rows);
+        await Assert.ThrowsAsync<BusinessCentralProtocolException>(
+            () => client.Query<SalesOrder>().ToAllAsync());
 
         // First page, then one continuation that made no progress. Without the guard this
         // never returns.

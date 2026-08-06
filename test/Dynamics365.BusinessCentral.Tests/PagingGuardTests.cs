@@ -164,6 +164,209 @@ public class PagingGuardTests
 
     #endregion
 
+    #region Continuations are only trusted as far as they advance
+
+    /// <summary>
+    /// A continuation is the one URL the client sends that it did not build, and it carries
+    /// the bearer token. One pointing at another origin is not followed: doing so would
+    /// disclose the token to whoever answers there and make the client fetch any host the
+    /// response named.
+    /// </summary>
+    [Fact]
+    public async Task Continuation_To_A_Foreign_Origin_Is_Refused()
+    {
+        var hosts = new List<string>();
+
+        var client = TestBase.CreateClient(TestBase.WithToken(req =>
+        {
+            hosts.Add(req.RequestUri!.Host);
+
+            return TestBase.Json(
+                "{\"value\":[{\"no\":\"a\"}],\"@odata.nextLink\":\"https://attacker.example/page2\"}");
+        }));
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralProtocolException>(
+            () => client.Query<SalesOrder>().ToAllAsync());
+
+        Assert.Equal("https://attacker.example/page2", ex.RequestUrl);
+        Assert.True(ex.IsProtocolViolation);
+        Assert.False(ex.IsTransient);
+
+        // The point of the guard: the foreign host was never contacted, so the token
+        // never left the configured service origin.
+        Assert.DoesNotContain("attacker.example", hosts);
+    }
+
+    /// <summary>
+    /// The rejection message must name the origin that was compared, not <c>BaseUrl</c>. A real
+    /// BaseUrl carries a path (<c>…/v2.0/{tenant}/{environment}/ODataV4</c>) that this check
+    /// deliberately ignores, so printing it would send a reader comparing the one part that is
+    /// allowed to differ.
+    /// </summary>
+    [Fact]
+    public async Task Foreign_Origin_Message_Names_The_Origin_Not_The_Base_Url()
+    {
+        var client = TestBase.CreateClient(
+            TestBase.WithToken(_ => TestBase.Json(
+                "{\"value\":[{\"no\":\"a\"}],\"@odata.nextLink\":\"https://attacker.example/p2\"}")),
+            configure: o => o.BaseUrl = "https://test/v2.0/tenant/Production/ODataV4");
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralProtocolException>(
+            () => client.Query<SalesOrder>().ToAllAsync());
+
+        Assert.Contains("https://test)", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("ODataV4", ex.Message, StringComparison.Ordinal);
+
+        // And it says which components were compared, so "but the paths differ" is not the
+        // conclusion a reader reaches.
+        Assert.Contains("scheme, host and port", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The non-advancing-cursor message must not send the caller after a correlation ID: this
+    /// is thrown on a successful page, and the client only ever parses one out of an OData
+    /// error body, so there is none to find.
+    /// </summary>
+    [Fact]
+    public async Task Non_Advancing_Cursor_Message_Offers_Only_Actionable_Diagnostics()
+    {
+        var client = TestBase.CreateClient(TestBase.WithToken(_ => TestBase.Json(
+            "{\"value\":[{\"no\":\"a\"}],\"@odata.nextLink\":\"https://test/stuck\"}")));
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralProtocolException>(
+            () => client.Query<SalesOrder>().ToAllAsync());
+
+        Assert.DoesNotContain("correlation", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(ex.CorrelationId);
+        Assert.Equal("https://test/stuck", ex.RequestUrl);
+    }
+
+    /// <summary>
+    /// Same origin, different path, is the normal shape of a continuation and stays allowed —
+    /// the check compares scheme, host and port, not the path.
+    /// </summary>
+    [Fact]
+    public async Task Continuation_On_The_Service_Origin_Is_Followed()
+    {
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+            TestBase.Json(++dataCalls == 1
+                ? "{\"value\":[{\"no\":\"a\"}],\"@odata.nextLink\":\"https://test/anything?$skiptoken=x\"}"
+                : "{\"value\":[{\"no\":\"b\"}]}")));
+
+        var all = await client.Query<SalesOrder>().ToAllAsync();
+
+        Assert.Equal(2, all.Count);
+    }
+
+    /// <summary>
+    /// A plaintext continuation off an https base is a different origin by scheme, so it is
+    /// refused — that is what stops the token being talked down to http.
+    /// </summary>
+    [Fact]
+    public async Task Continuation_Downgraded_To_Http_Is_Refused()
+    {
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+            TestBase.Json("{\"value\":[{\"no\":\"a\"}],\"@odata.nextLink\":\"http://test/p2\"}")));
+
+        await Assert.ThrowsAsync<BusinessCentralProtocolException>(
+            () => client.Query<SalesOrder>().ToAllAsync());
+    }
+
+    /// <summary>
+    /// A cursor pointing at itself while still returning rows: following it replays the rows
+    /// already emitted, so an uncapped stream would repeat them forever. The guard used to
+    /// require an empty page, which this case never produces.
+    /// </summary>
+    [Fact]
+    public async Task Continuation_Cursor_That_Never_Advances_Throws()
+    {
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+        {
+            if (++dataCalls > 25)
+                throw new InvalidOperationException("Paging loop did not terminate.");
+
+            return TestBase.Json(
+                "{\"value\":[{\"no\":\"a\"}],\"@odata.nextLink\":\"https://test/stuck\"}");
+        }));
+
+        var ex = await Assert.ThrowsAsync<BusinessCentralProtocolException>(
+            () => client.Query<SalesOrder>().ToAllAsync());
+
+        Assert.Equal("https://test/stuck", ex.RequestUrl);
+
+        // First page, then the one fetch of /stuck; its repeat of the same cursor throws.
+        Assert.Equal(2, dataCalls);
+    }
+
+    /// <summary>A → B → A. Only the full visited set catches a cycle longer than one.</summary>
+    [Fact]
+    public async Task Cycling_Continuation_Cursors_Throw()
+    {
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+        {
+            if (++dataCalls > 25)
+                throw new InvalidOperationException("Paging loop did not terminate.");
+
+            // p1 -> p2 -> p1 -> ...
+            return TestBase.Json(dataCalls % 2 == 1
+                ? "{\"value\":[{\"no\":\"a\"}],\"@odata.nextLink\":\"https://test/p2\"}"
+                : "{\"value\":[{\"no\":\"b\"}],\"@odata.nextLink\":\"https://test/p1\"}");
+        }));
+
+        await Assert.ThrowsAsync<BusinessCentralProtocolException>(
+            () => client.Query<SalesOrder>().ToAllAsync());
+    }
+
+    /// <summary>
+    /// A nextLink asserts that continuation remains. Even when the repeated page is empty,
+    /// stopping quietly would claim the result is complete without evidence; the repeated
+    /// cursor is therefore the same protocol violation as one carrying rows.
+    /// </summary>
+    [Fact]
+    public async Task Empty_Page_Repeating_Its_Cursor_Throws()
+    {
+        var dataCalls = 0;
+
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+        {
+            if (++dataCalls > 25)
+                throw new InvalidOperationException("Paging loop did not terminate.");
+
+            return TestBase.Json(dataCalls == 1
+                ? "{\"value\":[{\"no\":\"a\"}],\"@odata.nextLink\":\"https://test/stuck\"}"
+                : "{\"value\":[],\"@odata.nextLink\":\"https://test/stuck\"}");
+        }));
+
+        await Assert.ThrowsAsync<BusinessCentralProtocolException>(
+            () => client.Query<SalesOrder>().ToAllAsync());
+
+        Assert.Equal(2, dataCalls);
+    }
+
+    /// <summary>The path-based surface shares QueryPager, so it inherits both guards.</summary>
+    [Fact]
+    public async Task Path_Based_Stream_Refuses_A_Foreign_Continuation()
+    {
+        var client = TestBase.CreateClient(TestBase.WithToken(_ =>
+            TestBase.Json(
+                "{\"value\":[{\"no\":\"a\"}],\"@odata.nextLink\":\"https://attacker.example/p2\"}")));
+
+        await Assert.ThrowsAsync<BusinessCentralProtocolException>(async () =>
+        {
+            await foreach (var _ in client.QueryStreamAsync<SalesOrder>("salesOrders"))
+            {
+            }
+        });
+    }
+
+    #endregion
+
     #region Token lifetime and user agent
 
     [Theory]

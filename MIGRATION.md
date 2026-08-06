@@ -351,13 +351,68 @@ every resolution of `IBusinessCentralClient` triggered a fresh token request. 2.
 cache to a singleton. Expect a large drop in calls to your identity provider. No code
 change required.
 
-### Two bugs whose fixes change URLs
+### Three bugs whose fixes change URLs
 
 - `QueryRawAsync("salesOrders?$top=5")` previously percent-encoded the query string into the
   path (`salesOrders%3F%24top%3D5`). It now works as documented.
 - Alternate keys such as `No='1000'` were mangled to `No%3D%271000%27`. They now survive.
+- A company name containing an apostrophe was percent-encoded but never escaped as an OData
+  string literal, so `O'Brien Ltd` went out as `Company('O%27Brien Ltd')` — which decodes to a
+  bare quote and ends the literal early. It is now `Company('O%27%27Brien%20Ltd')`. Every
+  request from such a tenant used to fail; if you renamed a company to work around it, you can
+  rename it back. Tests asserting the old URL shape need updating.
 
-If you built workarounds for either, remove them.
+If you built workarounds for any of them, remove them.
+
+### `CountAsync` ignores `Top` and `Skip` — on both paths
+
+`$count` is independent of the page window, so the server path always answered the count of
+everything the filter matched, whatever `Top` said. The fallback used when an endpoint ignores
+`$count` reapplied the builder's `Top` and `Skip`, so `.Top(10).CountAsync()` returned `10`
+there and the full total on an endpoint that honours `$count` — the same query, two answers.
+The fallback now walks unpaged, so the full total is the answer everywhere.
+
+If you used `.Top(n).CountAsync()` as a bounded probe, it never worked as one against a
+`$count`-honouring endpoint. Use a `Top(n)` read and inspect its length instead:
+
+```csharp
+var probe = await client.Query<SalesOrder>().Where(...).Top(101).ToListAsync();
+var atLeast100 = probe.Count > 100;
+```
+
+### A token-endpoint `404` surfaces instead of becoming `null`
+
+`GetAsync` returns `null` for a missing entity, and its `try` spans token acquisition — which
+reports through the same exception hierarchy. A misconfigured `TokenEndpoint` answering `404`
+was therefore read as "no such entity": every read came back empty, with nothing thrown to say
+authentication had never happened. It now throws.
+
+If a `GetAsync` that "found nothing" starts throwing `BusinessCentralNotFoundException` with
+`IsTokenAcquisitionFailure` set, your `TokenEndpoint` was wrong all along and the reads were
+never reaching Business Central.
+
+### A bad `@odata.nextLink` is refused rather than followed
+
+Two continuation faults now throw `BusinessCentralProtocolException` — new in this release,
+`StatusCode` `0`, `Method` empty, `RequestUrl` carrying the offending link:
+
+- **Off-origin.** Continuations are sent verbatim and carry the bearer token, so one pointing
+  at another scheme, host or port than `ResolvedBaseUrl` is not followed. Business Central
+  issues continuations on the origin it was asked; nothing legitimate changes. If you have a
+  proxy that rewrites continuations to a different host, point `BaseUrl` at the proxy.
+- **Non-advancing.** A cursor already followed used to be re-followed if its page had rows,
+  which replayed those rows forever — an uncapped `StreamAsync` or `ToAllAsync` never returned.
+  Cycles (`A → B → A`) are caught too.
+
+  **This is the one that can change a call that used to succeed.** When the repeated cursor
+  arrived on an *empty* page, the pager stopped and returned the rows it had. That looked like
+  a clean result and was reported as one, but a `nextLink` asserts continuation remains — so
+  the set may have been truncated, with nothing to say so. It now throws. A `ToAllAsync` that
+  starts throwing `BusinessCentralProtocolException` was previously returning a silently short
+  result; treat the row count it used to produce as unreliable rather than as the baseline.
+
+Retry-policy code that dead-letters on non-transient failures already covers both; neither is
+transient.
 
 ---
 
@@ -491,4 +546,6 @@ There is no deprecation on the path-based API; migrate at your own pace, or not 
       them; not every published page exposes them
 - [ ] Re-check chunk sizes on bulk key lookups against `MaxQueryStringLength` (an `or`-chain costs
       ~2× per key what `in (...)` would — 38 encoded characters against 17 for an 8-character key)
+- [ ] Re-check any `.Top(n).CountAsync()` — `Top`/`Skip` never narrow a count
+- [ ] Re-check `GetAsync` calls that "always return null" — a token-endpoint `404` now throws
 - [ ] Optionally simplify configuration and drop hand-built `BaseUrl`

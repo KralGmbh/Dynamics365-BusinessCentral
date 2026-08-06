@@ -7,7 +7,7 @@
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral.Testing</PackageId>
-        <Version>2.0.0-alpha.7</Version>
+        <Version>2.0.0-rc.1</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
 
@@ -40,6 +40,13 @@
         </PackageReleaseNotes>
 
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+        <!-- Same contract as the main package: the fake's surface is what consumers write
+             their tests against, so breaking it breaks their suites. See the main csproj for
+             why the baseline moves. -->
+        <EnablePackageValidation>true</EnablePackageValidation>
+        <PackageValidationBaselineVersion>2.0.0-alpha.7</PackageValidationBaselineVersion>
+        <EnableStrictModeForCompatibleTfms>true</EnableStrictModeForCompatibleTfms>
 
         <PublishRepositoryUrl>true</PublishRepositoryUrl>
         <EmbedUntrackedSources>true</EmbedUntrackedSources>

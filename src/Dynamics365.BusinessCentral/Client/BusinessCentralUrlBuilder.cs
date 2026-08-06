@@ -354,10 +354,23 @@ internal sealed class BusinessCentralUrlBuilder
         return count;
     }
 
+    /// <summary>
+    /// Builds <c>{BaseUrl}/Company('{company}')</c>, escaping the name as an OData string
+    /// literal <b>before</b> percent-encoding it.
+    /// </summary>
+    /// <remarks>
+    /// Both steps are needed and the order matters. Percent-encoding alone is not enough:
+    /// <see cref="Uri.EscapeDataString(string)"/> renders <c>'</c> as <c>%27</c>, which the
+    /// server decodes back to a bare quote before the OData parser sees it — so a company
+    /// named <c>O'Brien Ltd</c> arrives as <c>Company('O'Brien Ltd')</c>, whose literal ends
+    /// at the second quote. Doubling the quote first (the OData escape) and encoding second
+    /// gives <c>Company('O%27%27Brien%20Ltd')</c>, which decodes to the intended literal.
+    /// Doing it the other way round would escape the percent signs.
+    /// </remarks>
     private string BuildCompanyBase()
     {
-        var encodedCompany = Uri.EscapeDataString(_company);
-        return $"{_baseUrl}/Company('{encodedCompany}')";
+        var literal = _company.Replace("'", "''", StringComparison.Ordinal);
+        return $"{_baseUrl}/Company('{Uri.EscapeDataString(literal)}')";
     }
 
     /// <summary>
