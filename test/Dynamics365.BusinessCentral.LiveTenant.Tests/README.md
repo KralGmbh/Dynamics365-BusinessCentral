@@ -18,9 +18,18 @@ Without credentials every fact **skips** rather than fails — a contributor wit
 not see permanent red. Configure it with `BC_TENANT_ID` / `BC_CLIENT_ID` / `BC_CLIENT_SECRET`, or a
 gitignored `.env/dev-tenant.md` at the repository root.
 
-The CI job (`.github/workflows/live-tenant.yml`) asserts the secret is present before running,
-because "all skipped" and "all passed" are the same colour. It never runs on `pull_request`:
-secrets are unavailable to fork PRs, and `pull_request_target` is the classic way to leak them.
+The CI job (`.github/workflows/live-tenant.yml`) asserts all three credentials are present before
+running, because "all skipped" and "all passed" are the same colour — and an unset repository
+*variable* skips the suite just as effectively as a missing secret.
+
+It runs only on pushes to master and on a weekly schedule. Not on `pull_request`, because secrets
+are unavailable to fork PRs and `pull_request_target` is the classic way to leak them; and not on
+`workflow_dispatch`, because a dispatch runs the workflow definition from the ref it is given, so
+anyone able to push a branch could edit the job on that branch and read the secret out of an
+unreviewed run. Restoring manual runs safely means putting the secret in a GitHub Environment with
+a deployment-branch policy limited to master.
+
+`GuardEnvironmentTests` needs no tenant and always runs.
 
 ## Safety
 

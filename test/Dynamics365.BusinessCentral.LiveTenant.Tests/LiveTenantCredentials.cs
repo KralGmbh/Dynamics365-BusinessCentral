@@ -90,7 +90,16 @@ public sealed record LiveTenantCredentials(string TenantId, string ClientId, str
         return values;
     }
 
-    /// <summary>Walks up from the test binaries to the repository root.</summary>
+    /// <summary>
+    /// Walks up from the test binaries to the repository root, and <b>stops there</b>.
+    /// </summary>
+    /// <remarks>
+    /// The stop is the point. An unbounded walk keeps climbing past the repository into whatever
+    /// workspace directory happens to contain it, so a checkout with no credentials of its own
+    /// could silently authenticate with an unrelated sibling project's tenant instead of skipping
+    /// as documented. The repository root is the directory holding <c>.git</c>; it is checked for
+    /// the credential file, and the walk ends there whether or not one is found.
+    /// </remarks>
     private static string? FindEnvFile()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -100,6 +109,10 @@ public sealed record LiveTenantCredentials(string TenantId, string ClientId, str
             var candidate = Path.Combine(directory.FullName, EnvFile);
             if (File.Exists(candidate))
                 return candidate;
+
+            // Path.Exists rather than Directory.Exists: .git is a file in a worktree or submodule.
+            if (Path.Exists(Path.Combine(directory.FullName, ".git")))
+                return null;
 
             directory = directory.Parent;
         }

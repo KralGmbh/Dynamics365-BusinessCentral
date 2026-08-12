@@ -2,12 +2,18 @@ name: Live tenant
 
 # Never on pull_request. The facts in this suite need tenant credentials, and secrets are not
 # available to a fork's pull request — a fork PR would therefore report green having proved
-# nothing. Using pull_request_target to work around that is the classic public-repo secret leak,
-# so this runs only on pushes to master (where the code has already been reviewed) and on demand.
+# nothing. Using pull_request_target to work around that is the classic public-repo secret leak.
+#
+# No workflow_dispatch either, which is a deliberate loss of convenience. A dispatch runs the
+# workflow definition from whatever ref is chosen, so anyone able to push a branch could edit this
+# file on that branch and read BC_CLIENT_SECRET out of an unreviewed run — the exact boundary the
+# push-to-master trigger exists to hold. An in-file branch guard would not help, because the
+# attacker's copy of the file is the one that runs. The robust way to have manual runs back is a
+# GitHub Environment holding the secret with a deployment-branch policy limited to master; until
+# that exists, run the suite locally, which needs no secret beyond the one already on the machine.
 on:
   push:
     branches: [ "master" ]
-  workflow_dispatch:
   schedule:
     # Weekly. The point is to notice when Business Central changes underneath the package, which
     # happens on Microsoft's release cadence, not on ours.
@@ -26,15 +32,26 @@ jobs:
           dotnet-version: '10.0.x'
 
       # The suite skips when unconfigured, which is right for a contributor's machine and wrong
-      # here: a missing secret would turn this job into a green light that tested nothing. Fail
-      # loudly instead.
+      # here: a missing credential would turn this job into a green light that tested nothing.
+      #
+      # All three are checked, not just the secret. TryLoad needs the complete set, so an unset or
+      # renamed repository *variable* skips every fact just as effectively as a missing secret —
+      # and would do it while the obvious check passed.
       - name: Require credentials
         env:
+          BC_TENANT_ID: ${{ vars.BC_TENANT_ID }}
+          BC_CLIENT_ID: ${{ vars.BC_CLIENT_ID }}
           BC_CLIENT_SECRET: ${{ secrets.BC_CLIENT_SECRET }}
         run: |
-          if [ -z "$BC_CLIENT_SECRET" ]; then
-            echo "BC_CLIENT_SECRET is not set. This job exists to run against a real tenant;" >&2
-            echo "without it every fact would skip and the job would pass having proved nothing." >&2
+          missing=""
+          [ -z "$BC_TENANT_ID" ] && missing="$missing BC_TENANT_ID"
+          [ -z "$BC_CLIENT_ID" ] && missing="$missing BC_CLIENT_ID"
+          [ -z "$BC_CLIENT_SECRET" ] && missing="$missing BC_CLIENT_SECRET"
+
+          if [ -n "$missing" ]; then
+            echo "Missing tenant credentials:$missing" >&2
+            echo "This job exists to run against a real tenant; without the complete set every" >&2
+            echo "fact would skip and the job would pass having proved nothing." >&2
             exit 1
           fi
 

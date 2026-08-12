@@ -22,11 +22,18 @@ namespace Dynamics365.BusinessCentral.LiveTenant.Tests;
 /// there.
 /// </para>
 /// <para>
-/// <b>Fail closed.</b> The check requires the sandbox marker to be <i>present</i> in the resolved
-/// base URL. It deliberately does not test for the absence of "Production": a renamed or added
-/// environment must fail, not slip through. And it asserts on the <i>resolved</i> URL rather than
-/// <see cref="BusinessCentralOptions.Environment"/>, because <c>BaseUrl</c> can be set wholesale —
-/// in which case the placeholder is never substituted and <c>Environment</c> is decorative.
+/// <b>Fail closed.</b> The check requires the sandbox to be <i>present</i> in the resolved base
+/// URL, as a whole path segment. It deliberately does not test for the absence of "Production": a
+/// renamed or added environment must fail, not slip through. And it asserts on the <i>resolved</i>
+/// URL rather than <see cref="BusinessCentralOptions.Environment"/>, because <c>BaseUrl</c> can be
+/// set wholesale — in which case the placeholder is never substituted and <c>Environment</c> is
+/// decorative.
+/// </para>
+/// <para>
+/// <b>Segment, not substring.</b> A substring test passes for <c>KRALTEST2</c> — a real
+/// environment name shape, and one that would send live queries somewhere other than the intended
+/// sandbox while the guard reported itself satisfied. Environment names are path segments, so the
+/// check compares them as path segments.
 /// </para>
 /// </remarks>
 public static class LiveTenant
@@ -93,13 +100,15 @@ public static class LiveTenant
             .Replace("{tenant}", options.TenantId ?? string.Empty, StringComparison.OrdinalIgnoreCase)
             .Replace("{environment}", options.Environment ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
-        if (resolved.Contains(Environment, StringComparison.OrdinalIgnoreCase))
+        var segments = resolved.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        if (segments.Any(segment => segment.Equals(Environment, StringComparison.OrdinalIgnoreCase)))
             return;
 
         throw new InvalidOperationException(
             $"Live-tenant tests may only run against {Environment}. The resolved Business Central " +
-            $"base URL does not name it: '{resolved}'. This is a hard guardrail — Production is " +
-            "read-only at all times. Fix the configuration; do not relax this check.");
+            $"base URL does not name it as a path segment: '{resolved}'. This is a hard guardrail — " +
+            "Production is read-only at all times. Fix the configuration; do not relax this check.");
     }
 
     /// <summary>
