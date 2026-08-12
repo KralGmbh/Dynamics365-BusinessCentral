@@ -5,5 +5,6 @@
   </Folder>
   <Folder Name="/test/">
     <Project Path="test/Dynamics365.BusinessCentral.Tests/Dynamics365.BusinessCentral.Tests.csproj" Id="50dec5d1-86c4-4fa7-a18a-b9e9f24fbe40" />
+    <Project Path="test/Dynamics365.BusinessCentral.LiveTenant.Tests/Dynamics365.BusinessCentral.LiveTenant.Tests.csproj" />
   </Folder>
 </Solution>

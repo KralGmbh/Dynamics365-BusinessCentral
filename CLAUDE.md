@@ -31,6 +31,9 @@ dotnet test -f net10.0 --filter "FullyQualifiedName~ClientTests.QueryAll_Pages_U
 dotnet test -f net10.0 --filter "FullyQualifiedName~ObserverTests"
 
 dotnet pack -c Release          # packs BOTH packages (main + Testing), .nupkg + .snupkg each
+
+# Live-tenant facts (net10.0 only, read-only, skip without credentials):
+dotnet test test/Dynamics365.BusinessCentral.LiveTenant.Tests/Dynamics365.BusinessCentral.LiveTenant.Tests.csproj
 ```
 
 CI: `.github/workflows/sonar.yml` builds + tests **all three TFMs** and runs SonarCloud on every push/PR to `master`. Both workflows install the 8.0.x/9.0.x/10.0.x runtimes via `setup-dotnet` — the 10.0.x SDK can *build* net8.0/net9.0 from NuGet targeting packs, but their test hosts need the matching runtimes, and depending on the runner image to preinstall them is what previously left net9.0 executed nowhere. Don't reintroduce `-f net8.0` on the gate; it belongs only on the Sonar coverage run, where a second and third pass over the same sources would not move the number. `.github/workflows/nuget.yml` **tests before it packs** and pushes on published GitHub releases — a release is cut from a tag, which need not be the commit CI last saw. Bump `<Version>` in both csprojs before tagging.
@@ -133,6 +136,8 @@ The typed client uses the explicit-factory overload of `AddHttpClient`, not `Act
 Pattern: `TestBase.CreateClient(handler, observer?, configure?)` builds a real `BusinessCentralClient` over `FakeHttpHandler`, a `HttpMessageHandler` driven by a `Func<HttpRequestMessage, HttpResponseMessage>`. **Every handler must answer the token request first** — wrap it in `TestBase.WithToken(...)`, which does that for you, rather than repeating the `Contains("auth")` branch. `TestBase.Json(body)` is the 200-response shorthand. Test entity types live in `Utils/`; `SalesOrder` is the annotated one used for typed-query tests.
 
 `ClientTests` is a `partial` class split by `#region` per operation; keep new tests grouped the same way.
+
+`test/Dynamics365.BusinessCentral.LiveTenant.Tests/` — the other half, and the only tests that touch a real tenant. Everything above runs through `FakeHttpHandler`, which proves what the client *sends*; these prove Business Central accepts it, and notice when BC changes underneath the package. **`net10.0` only** — one round trip per fact is enough, and what differs between TFMs is the compiled surface, which the gate and package validation already cover. That single TFM is why `sonar.yml`'s coverage step is scoped to the unit project: `-f net8.0` over the whole solution no longer restores. **No `InternalsVisibleTo`** — this project is a consumer, so anything it proves is something a consumer can rely on. Facts skip (never fail) without credentials, and `live-tenant.yml` therefore asserts the secret exists before running; it never runs on `pull_request`, because secrets are unavailable to fork PRs and `pull_request_target` is the classic leak. The suite is **read-only**: the write path is covered against the same tenant by the consuming application's live suite. Numbers the tenant owns (server page size, row counts) are reported, not asserted — pinning them would turn an administrative change into a package regression.
 
 ## Consumer feedback documents — do not commit
 

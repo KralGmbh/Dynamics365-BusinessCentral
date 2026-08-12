@@ -7,7 +7,7 @@
         <Nullable>enable</Nullable>
 
         <PackageId>Dynamics365.BusinessCentral</PackageId>
-        <Version>2.0.0-rc.1</Version>
+        <Version>2.0.0</Version>
         <Authors>Daniel Rückenbach</Authors>
         <Company>KRAL GmbH</Company>
 
@@ -35,40 +35,24 @@
         <!-- Shown on the nuget.org package page. Kept short and pointed at CHANGELOG.md
              rather than duplicated, since nuget.org renders this as plain text. -->
         <PackageReleaseNotes>
-            RELEASE CANDIDATE — 2.0.0-rc.1 is the 2.0.0 surface, frozen. Please exercise it
-            against a real tenant and report anything that differs from the documentation;
-            no further API changes are planned before stable.
+            2.0.0 — the first stable release of the 2.x line. The API is identical to
+            2.0.0-rc.1; what changed is the evidence behind it.
 
-            This build fixes six defects found in an external review of the whole solution.
-            Two produce a wrong answer rather than an error, so read these two even if you
-            read nothing else:
+            The release candidate ran in production for two working days across 1,029
+            Business Central calls with no BC-attributable failure and no rollback, and cut
+            Entra token round trips by roughly 93% — the singleton token provider fixing a
+            real 1.0 bug, where token state living on a transient typed client meant
+            re-authenticating far more often than necessary.
 
-            A company name containing an apostrophe built an unparseable URL. It was
-            percent-encoded but never escaped as an OData string literal, so O'Brien Ltd went
-            out as Company('O%27Brien Ltd') — which decodes to a bare quote and ends the
-            literal early. Every request from such a tenant failed.
+            The behaviours 2.0 is built on are now measured against a real tenant rather than
+            asserted in documentation: server-driven paging follows a genuine @odata.nextLink
+            and returns every row exactly once; a kindless DateTime filters as UTC instead of
+            being shifted by the machine's timezone; $select is case-insensitive; native 'in'
+            needs $schemaversion=2.1; an over-length query string is answered 414.
 
-            GetAsync swallowed a 404 from the token endpoint. Its catch spans token
-            acquisition, so a misconfigured TokenEndpoint answering 404 was read as "no such
-            entity" and returned as null — every read silently empty, nothing thrown to say
-            authentication never happened.
-
-            Also fixed: an @odata.nextLink is now followed only on the configured service
-            origin, because continuations are sent verbatim and carry the access token; a
-            continuation cursor that repeats throws instead of looping or truncating;
-            CountAsync returns the same number whether or not the endpoint honours $count
-            (Top and Skip never narrow a count); and a malformed 200 from the token endpoint
-            fails inside BusinessCentralException instead of leaking a raw JsonException,
-            without copying the identity provider's body into logs.
-
-            New: BusinessCentralProtocolException with the IsProtocolViolation predicate, and
-            BusinessCentralException.IsTokenAcquisitionFailure to tell a token-endpoint
-            failure from an answer about the entity.
-
-            Behaviour changes that are silent by nature — a ToAllAsync that starts throwing
-            was previously returning a possibly truncated result — are listed in MIGRATION.md.
-
-            Breaking changes — see the migration guide before upgrading:
+            Upgrading from 1.0 changes behaviour silently in places — paging, 204 on writes,
+            kindless DateTime filters, and the derived $select. Read the migration guide
+            before upgrading, even if the build is green:
             https://github.com/KralGmbh/Dynamics365-BusinessCentral/blob/master/MIGRATION.md
 
             Full changelog:
@@ -89,7 +73,7 @@
              package to be restorable, so an offline build must pass
              /p:DisablePackageBaselineValidation=true. -->
         <EnablePackageValidation>true</EnablePackageValidation>
-        <PackageValidationBaselineVersion>2.0.0-alpha.7</PackageValidationBaselineVersion>
+        <PackageValidationBaselineVersion>2.0.0-rc.1</PackageValidationBaselineVersion>
         <EnableStrictModeForCompatibleTfms>true</EnableStrictModeForCompatibleTfms>
 
         <!-- SourceLink is built into the .NET 8+ SDK; these make the snupkg actually

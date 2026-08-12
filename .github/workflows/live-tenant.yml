@@ -1,0 +1,48 @@
+name: Live tenant
+
+# Never on pull_request. The facts in this suite need tenant credentials, and secrets are not
+# available to a fork's pull request — a fork PR would therefore report green having proved
+# nothing. Using pull_request_target to work around that is the classic public-repo secret leak,
+# so this runs only on pushes to master (where the code has already been reviewed) and on demand.
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:
+  schedule:
+    # Weekly. The point is to notice when Business Central changes underneath the package, which
+    # happens on Microsoft's release cadence, not on ours.
+    - cron: '0 6 * * 1'
+
+jobs:
+  live-tenant:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The suite skips when unconfigured, which is right for a contributor's machine and wrong
+      # here: a missing secret would turn this job into a green light that tested nothing. Fail
+      # loudly instead.
+      - name: Require credentials
+        env:
+          BC_CLIENT_SECRET: ${{ secrets.BC_CLIENT_SECRET }}
+        run: |
+          if [ -z "$BC_CLIENT_SECRET" ]; then
+            echo "BC_CLIENT_SECRET is not set. This job exists to run against a real tenant;" >&2
+            echo "without it every fact would skip and the job would pass having proved nothing." >&2
+            exit 1
+          fi
+
+      - name: Test against the sandbox tenant
+        env:
+          BC_TENANT_ID: ${{ vars.BC_TENANT_ID }}
+          BC_CLIENT_ID: ${{ vars.BC_CLIENT_ID }}
+          BC_CLIENT_SECRET: ${{ secrets.BC_CLIENT_SECRET }}
+        run: |
+          dotnet test test/Dynamics365.BusinessCentral.LiveTenant.Tests/Dynamics365.BusinessCentral.LiveTenant.Tests.csproj \
+            -c Release --logger "console;verbosity=detailed"

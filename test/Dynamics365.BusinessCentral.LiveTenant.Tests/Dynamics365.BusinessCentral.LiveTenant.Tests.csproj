@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <!-- Single TFM on purpose. Every fact here costs a real round trip to a real tenant,
+             and running the suite once per TFM would triple that traffic to prove nothing:
+             what differs between net8/9/10 is the compiled surface, which the unit gate and
+             package validation already cover on all three. This suite tests Business Central,
+             not the framework. -->
+        <TargetFramework>net10.0</TargetFramework>
+
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+
+        <!-- Not part of the CI gate: `dotnet test` on the solution would run these, and they
+             need a tenant. They are opted into explicitly, by project path. -->
+        <IsTestProject>true</IsTestProject>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+        <PackageReference Include="xunit" Version="2.9.3" />
+        <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    </ItemGroup>
+
+    <!--
+        Deliberately NO InternalsVisibleTo, and deliberately no reference to the unit-test
+        project's helpers. This suite is a consumer: it may only touch the public API, so that
+        anything it proves is something a consumer can rely on. The KRALTEST guard therefore
+        re-implements placeholder resolution rather than reading the internal ResolvedBaseUrl.
+    -->
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\Dynamics365.BusinessCentral\Dynamics365.BusinessCentral.csproj" />
+        <ProjectReference Include="..\..\src\Dynamics365.BusinessCentral.Testing\Dynamics365.BusinessCentral.Testing.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Xunit" />
+    </ItemGroup>
+
+</Project>
