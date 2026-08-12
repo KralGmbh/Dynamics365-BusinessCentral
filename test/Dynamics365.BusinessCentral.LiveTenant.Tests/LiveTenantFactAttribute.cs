@@ -12,9 +12,15 @@ namespace Dynamics365.BusinessCentral.LiveTenant.Tests;
 /// present before invoking the suite — see <c>.github/workflows/live-tenant.yml</c>.
 /// </para>
 /// <para>
+/// Two conditions, not one: the run must be opted in via
+/// <see cref="LiveTenant.OptInVariable"/> <i>and</i> have credentials. Credentials alone would
+/// mean a solution-wide <c>dotnet test</c> on a developer's machine quietly became a live-tenant
+/// run.
+/// </para>
+/// <para>
 /// xUnit v2 evaluates <see cref="FactAttribute.Skip"/> at discovery, so this reads the
-/// credentials once per test-class construction rather than per run. That is fine: credentials
-/// do not appear mid-run.
+/// environment once per test-class construction rather than per run. That is fine: neither the
+/// opt-in nor the credentials appear mid-run.
 /// </para>
 /// </remarks>
 [AttributeUsage(AttributeTargets.Method)]
@@ -22,9 +28,16 @@ public sealed class LiveTenantFactAttribute : FactAttribute
 {
     public LiveTenantFactAttribute()
     {
-        if (!LiveTenant.IsConfigured)
-            Skip = "No live-tenant credentials configured (BC_TENANT_ID / BC_CLIENT_ID / " +
-                   "BC_CLIENT_SECRET, or .env/dev-tenant.md). Skipped, not failed — see " +
-                   "LiveTenantFactAttribute.";
+        if (!LiveTenant.IsOptedIn)
+        {
+            Skip = $"Live-tenant facts are opt-in: set {LiveTenant.OptInVariable}=1 to run them. " +
+                   "Skipped, not failed — see LiveTenantFactAttribute.";
+            return;
+        }
+
+        if (LiveTenantCredentials.TryLoad() is null)
+            Skip = $"{LiveTenant.OptInVariable} is set but no credentials were found " +
+                   "(BC_TENANT_ID / BC_CLIENT_ID / BC_CLIENT_SECRET, or .env/dev-tenant.md). " +
+                   "Skipped, not failed — see LiveTenantFactAttribute.";
     }
 }

@@ -72,6 +72,61 @@ public sealed class GuardEnvironmentTests
         LiveTenant.GuardEnvironment(options);
     }
 
+    /// <summary>
+    /// The sandbox name somewhere harmless in the path does not make the target the sandbox.
+    /// </summary>
+    /// <remarks>
+    /// Both of these passed an earlier version of this guard. The first is the reason it now reads
+    /// the environment out of a position rather than searching for it: the URL carries the marker
+    /// and points at Production. The second is the same mistake in a shape nobody would write on
+    /// purpose but a template could easily produce.
+    /// </remarks>
+    [Theory]
+    [InlineData("https://proxy.internal/KRALTEST/v2.0/tenant/Production/ODataV4")]
+    [InlineData("https://api.businesscentral.dynamics.com/KRALTEST/v2.0/tenant/Production/ODataV4")]
+    public void Rejects_the_sandbox_name_outside_the_environment_position(string baseUrl)
+    {
+        var options = OptionsFor(LiveTenant.Environment);
+        options.BaseUrl = baseUrl;
+
+        Assert.Throws<InvalidOperationException>(() => LiveTenant.GuardEnvironment(options));
+    }
+
+    /// <summary>
+    /// A service root this code cannot parse is one whose environment it cannot verify.
+    /// </summary>
+    /// <remarks>
+    /// "Cannot verify" and "verified safe" must not produce the same answer, so an unrecognized
+    /// shape is rejected rather than interpreted — including the case where the sandbox name is
+    /// the last segment and there is no <c>ODataV4</c> at all.
+    /// </remarks>
+    [Theory]
+    [InlineData("not a url")]
+    [InlineData("")]
+    [InlineData("https://api.businesscentral.dynamics.com/v2.0/tenant/KRALTEST")]
+    [InlineData("https://api.businesscentral.dynamics.com/v2.0/tenant/KRALTEST/api/v2.0")]
+    public void Rejects_a_service_root_it_cannot_read(string baseUrl)
+    {
+        var options = OptionsFor(LiveTenant.Environment);
+        options.BaseUrl = baseUrl;
+
+        Assert.Throws<InvalidOperationException>(() => LiveTenant.GuardEnvironment(options));
+    }
+
+    /// <summary>The opt-in is a second condition, not a substitute for credentials.</summary>
+    /// <remarks>
+    /// Pinned because the failure it prevents is silent in the other direction: were
+    /// <see cref="LiveTenant.IsConfigured"/> to stop consulting the opt-in, a solution-wide
+    /// <c>dotnet test</c> on a machine holding credentials would quietly start contacting the
+    /// tenant, and nothing would report that it had.
+    /// </remarks>
+    [Fact]
+    public void Live_facts_need_the_opt_in_as_well_as_credentials()
+    {
+        if (!LiveTenant.IsOptedIn)
+            Assert.False(LiveTenant.IsConfigured);
+    }
+
     private static BusinessCentralOptions OptionsFor(string environment) => new()
     {
         TenantId = "00000000-0000-0000-0000-000000000000",

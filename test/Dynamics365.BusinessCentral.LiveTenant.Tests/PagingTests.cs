@@ -19,6 +19,16 @@ namespace Dynamics365.BusinessCentral.LiveTenant.Tests;
 /// a distinct-key count. Both are needed: a run that dropped one page and duplicated another
 /// could still return the right <i>number</i> of rows.
 /// </para>
+/// <para>
+/// <b>The count is bracketed, not sampled.</b> <c>$count</c> and the paged read are separate
+/// requests against a live tenant, so a row inserted or deleted between them would fail an exact
+/// comparison while paging was working perfectly — a flake that looks exactly like the regression
+/// this suite exists to catch, which is the worst kind. Each fact therefore counts before and
+/// after, and requires the fetched total to fall within that bracket. When nothing changed the two
+/// counts are equal and the check is exact; when something did, the tolerance is the measured size
+/// of the change rather than a guess. A dropped or duplicated page still fails, because it moves
+/// the total far outside a bracket that only ever spans concurrent tenant activity.
+/// </para>
 /// </remarks>
 public sealed class PagingTests(ITestOutputHelper output)
 {
@@ -35,14 +45,17 @@ public sealed class PagingTests(ITestOutputHelper output)
     {
         var client = LiveTenant.CreateClient();
 
-        var total = await client.Query<LdatSummaryRow>().CountAsync();
-        Assert.True(total > 500, $"This fact needs a set larger than one requested page; got {total}.");
+        var before = await client.Query<LdatSummaryRow>().CountAsync();
+        Assert.True(before > 500, $"This fact needs a set larger than one requested page; got {before}.");
 
         var rows = await client.Query<LdatSummaryRow>().PageSize(500).ToAllAsync();
 
-        output.WriteLine($"LdatSummary: $count={total}, fetched={rows.Count}, pages≈{Math.Ceiling(total / 500d)}");
+        var after = await client.Query<LdatSummaryRow>().CountAsync();
 
-        Assert.Equal(total, rows.Count);
+        output.WriteLine($"LdatSummary: $count={before}..{after}, fetched={rows.Count}, " +
+                         $"pages≈{Math.Ceiling(before / 500d)}");
+
+        AssertCompleteWithin(before, after, rows.Count);
         Assert.Equal(rows.Count, rows.Select(r => r.SystemId).Distinct().Count());
     }
 
@@ -69,25 +82,42 @@ public sealed class PagingTests(ITestOutputHelper output)
     {
         var client = LiveTenant.CreateClient();
 
-        var total = await client.Query<SalesLine>().CountAsync();
+        var before = await client.Query<SalesLine>().CountAsync();
 
         // One request, no page preference: whatever comes back is the server's own page.
         var firstPage = await client.Query<SalesLine>().ToPageAsync();
 
-        output.WriteLine($"LDATSalesLine: $count={total}, server page={firstPage.Items.Count}, " +
-                         $"nextLink={(firstPage.HasMore ? "issued" : "none")}");
+        var rows = await client.Query<SalesLine>().ToAllAsync();
+
+        var after = await client.Query<SalesLine>().CountAsync();
+
+        output.WriteLine($"LDATSalesLine: $count={before}..{after}, server page={firstPage.Items.Count}, " +
+                         $"nextLink={(firstPage.HasMore ? "issued" : "none")}, fetched={rows.Count}");
 
         Assert.True(
             firstPage.HasMore,
             $"This fact needs a set larger than the server's Max Page Size. The whole set " +
-            $"({total} rows) came back in one page, so no continuation was exercised. Pick a " +
+            $"({before} rows) came back in one page, so no continuation was exercised. Pick a " +
             $"larger entity set rather than weakening this assertion.");
 
-        Assert.True(firstPage.Items.Count < total);
+        Assert.True(firstPage.Items.Count < before);
 
-        var rows = await client.Query<SalesLine>().ToAllAsync();
-
-        Assert.Equal(total, rows.Count);
+        AssertCompleteWithin(before, after, rows.Count);
         Assert.Equal(rows.Count, rows.Select(r => r.SystemId).Distinct().Count());
+    }
+
+    /// <summary>
+    /// Requires <paramref name="fetched"/> to lie within the bracket the two counts describe.
+    /// </summary>
+    private static void AssertCompleteWithin(long before, long after, int fetched)
+    {
+        var low = Math.Min(before, after);
+        var high = Math.Max(before, after);
+
+        Assert.True(
+            fetched >= low && fetched <= high,
+            $"Paged read returned {fetched} rows, outside the {low}..{high} the endpoint reported " +
+            $"either side of it. A count that moved during the read explains a result inside that " +
+            $"bracket; nothing outside it is explained by tenant activity.");
     }
 }

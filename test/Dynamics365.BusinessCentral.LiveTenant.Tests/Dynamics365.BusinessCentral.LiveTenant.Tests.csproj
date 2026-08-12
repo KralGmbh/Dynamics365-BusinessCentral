@@ -12,8 +12,11 @@
         <Nullable>enable</Nullable>
         <IsPackable>false</IsPackable>
 
-        <!-- Not part of the CI gate: `dotnet test` on the solution would run these, and they
-             need a tenant. They are opted into explicitly, by project path. -->
+        <!-- This project IS in the solution, so `dotnet test` over the solution discovers it.
+             That is deliberate — an excluded project stops being maintained — and it is why the
+             live facts require the BC_LIVE_TENANT_TESTS opt-in on top of credentials rather than
+             credentials alone. Without it a solution-wide run on a developer's machine would
+             quietly become a live-tenant run. See LiveTenant.OptInVariable. -->
         <IsTestProject>true</IsTestProject>
     </PropertyGroup>
 

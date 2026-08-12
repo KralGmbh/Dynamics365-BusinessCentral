@@ -11,12 +11,20 @@ a test instead of surviving in prose.
 ## Running it
 
 ```bash
-dotnet test test/Dynamics365.BusinessCentral.LiveTenant.Tests/Dynamics365.BusinessCentral.LiveTenant.Tests.csproj
+BC_LIVE_TENANT_TESTS=1 \
+  dotnet test test/Dynamics365.BusinessCentral.LiveTenant.Tests/Dynamics365.BusinessCentral.LiveTenant.Tests.csproj
 ```
 
-Without credentials every fact **skips** rather than fails — a contributor with no tenant should
-not see permanent red. Configure it with `BC_TENANT_ID` / `BC_CLIENT_ID` / `BC_CLIENT_SECRET`, or a
-gitignored `.env/dev-tenant.md` at the repository root.
+Two conditions, both required. **Credentials** — `BC_TENANT_ID` / `BC_CLIENT_ID` /
+`BC_CLIENT_SECRET`, or a gitignored `.env/dev-tenant.md` at the repository root — and the
+**`BC_LIVE_TENANT_TESTS` opt-in**. Missing either, every live fact *skips* rather than fails, so a
+contributor with no tenant never sees permanent red.
+
+The opt-in exists because this project is part of the solution, so `dotnet test` over the solution
+discovers it. Keeping it in the solution is deliberate — an excluded project stops being
+maintained — but without a second signal, an ordinary unit-test run on a machine that happens to
+have credentials would quietly become a live-tenant run, and routine local testing would start
+depending on external state.
 
 The CI job (`.github/workflows/live-tenant.yml`) asserts all three credentials are present before
 running, because "all skipped" and "all passed" are the same colour — and an unset repository
