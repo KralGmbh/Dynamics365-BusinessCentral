@@ -88,14 +88,14 @@ internal static class LiveTenantAssert
     }
 
     /// <summary>Names up to five offenders, so a failure diagnoses itself.</summary>
-    private static string Describe<T>(IReadOnlyCollection<T> members, string what)
+    private static string Describe<T>(T[] members, string what)
     {
-        if (members.Count == 0)
+        if (members.Length == 0)
             return $"0 {what}";
 
         var named = string.Join(", ", members.Take(5));
-        var rest = members.Count > 5 ? $", and {members.Count - 5} more" : string.Empty;
+        var rest = members.Length > 5 ? $", and {members.Length - 5} more" : string.Empty;
 
-        return $"{members.Count} {what} ({named}{rest})";
+        return $"{members.Length} {what} ({named}{rest})";
     }
 }
