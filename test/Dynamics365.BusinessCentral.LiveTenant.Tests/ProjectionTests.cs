@@ -85,8 +85,8 @@ public sealed class ProjectionTests(ITestOutputHelper output)
 
         // Deliberately the wrong casing for both. That the request differs from the canonical
         // spelling at all is what makes the probe meaningful, so it is checked rather than assumed.
-        var askedSystemId = systemId.ToUpperInvariant();
-        var askedSerialNo = serialNo.ToUpperInvariant();
+        var askedSystemId = DifferentCasing(systemId);
+        var askedSerialNo = DifferentCasing(serialNo);
 
         Assert.NotEqual(systemId, askedSystemId, StringComparer.Ordinal);
         Assert.NotEqual(serialNo, askedSerialNo, StringComparer.Ordinal);
@@ -121,6 +121,15 @@ public sealed class ProjectionTests(ITestOutputHelper output)
         ?? throw new InvalidOperationException(
             $"$metadata does not publish a '{column}' column on LdatSummary. Pick a column that " +
             "exists rather than relaxing the comparison.");
+
+    /// <summary>Chooses a casing guaranteed to differ from the canonical spelling.</summary>
+    private static string DifferentCasing(string canonical)
+    {
+        var upper = canonical.ToUpperInvariant();
+        return canonical.Equals(upper, StringComparison.Ordinal)
+            ? canonical.ToLowerInvariant()
+            : upper;
+    }
 
     /// <summary>
     /// The derived projection is what makes a wide page affordable: the same rows, without it,

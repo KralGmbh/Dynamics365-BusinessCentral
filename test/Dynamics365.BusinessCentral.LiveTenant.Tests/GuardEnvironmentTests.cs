@@ -18,7 +18,8 @@ public sealed class GuardEnvironmentTests
     {
         var options = OptionsFor(LiveTenant.Environment);
 
-        LiveTenant.GuardEnvironment(options);
+        // "Does not throw" is the assertion; stating it beats leaving it to the absence of one.
+        Assert.Null(Record.Exception(() => LiveTenant.GuardEnvironment(options)));
     }
 
     /// <summary>
@@ -69,7 +70,7 @@ public sealed class GuardEnvironmentTests
         var options = OptionsFor(LiveTenant.Environment);
         options.BaseUrl = "https://api.businesscentral.dynamics.com/v2.0/{tenant}/{environment}/ODataV4";
 
-        LiveTenant.GuardEnvironment(options);
+        Assert.Null(Record.Exception(() => LiveTenant.GuardEnvironment(options)));
     }
 
     /// <summary>

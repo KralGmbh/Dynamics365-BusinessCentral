@@ -41,8 +41,22 @@ public sealed class SchemaVersionTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// Under 2.1 the same query succeeds, and returns exactly what the portable or-chain returns.
+    /// Under 2.1 the same query succeeds, and selects the same rows as the portable or-chain.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The or-chain is read either side of the native one and the comparison is bracketed by
+    /// identity — see <see cref="LiveTenantAssert.SetWithinBracket"/>. Set equality against a
+    /// single or-chain read would fail whenever a matching row appeared or disappeared between two
+    /// live requests, and it would fail claiming the two renderings disagree, which is precisely
+    /// the finding this fact exists to make.
+    /// </para>
+    /// <para>
+    /// On a quiet tenant the two reference reads are identical and the bracket collapses to exact
+    /// set equality, so the check loses nothing when there is nothing to absorb. Both counts are
+    /// printed, so a bracket widening under real activity is visible rather than silent.
+    /// </para>
+    /// </remarks>
     [LiveTenantFact]
     public async Task Native_in_under_schema_version_2_1_matches_the_or_chain()
     {
@@ -54,20 +68,40 @@ public sealed class SchemaVersionTests(ITestOutputHelper output)
 
         var values = await SampleProductionOrderNumbersAsync();
 
-        var native = await client.Query<LdatSummaryRow>()
-            .Where(Filter.In<LdatSummaryRow>(x => x.ProductionOrderNo, values, ODataInStyle.Native))
-            .ToAllAsync();
+        async Task<IReadOnlyList<LdatSummaryRow>> ReadAsync(ODataInStyle style) =>
+            await client.Query<LdatSummaryRow>()
+                .Where(Filter.In<LdatSummaryRow>(x => x.ProductionOrderNo, values, style))
+                .ToAllAsync();
 
-        var orChain = await client.Query<LdatSummaryRow>()
-            .Where(Filter.In<LdatSummaryRow>(x => x.ProductionOrderNo, values, ODataInStyle.OrChain))
-            .ToAllAsync();
+        // The tenant is live: bracket the native read with the portable rendering so a row that
+        // changes while these requests run cannot masquerade as a rendering regression.
+        var orChainBefore = await ReadAsync(ODataInStyle.OrChain);
+        var native = await ReadAsync(ODataInStyle.Native);
+        var orChainAfter = await ReadAsync(ODataInStyle.OrChain);
 
-        output.WriteLine($"{values.Length} keys → native {native.Count} rows, or-chain {orChain.Count} rows");
+        var beforeIds = UniqueIds(orChainBefore, "or-chain before");
+        var nativeIds = UniqueIds(native, "native");
+        var afterIds = UniqueIds(orChainAfter, "or-chain after");
 
-        Assert.NotEmpty(native);
-        Assert.Equal(
-            orChain.Select(r => r.SystemId).OrderBy(id => id),
-            native.Select(r => r.SystemId).OrderBy(id => id));
+        output.WriteLine(
+            $"{values.Length} keys → or-chain {beforeIds.Count}/{afterIds.Count} rows around " +
+            $"native {nativeIds.Count} rows");
+
+        Assert.NotEmpty(nativeIds);
+        LiveTenantAssert.SetWithinBracket(beforeIds, afterIds, nativeIds, "Native in result");
+    }
+
+    private static HashSet<Guid> UniqueIds(
+        IReadOnlyCollection<LdatSummaryRow> rows,
+        string rendering)
+    {
+        var ids = rows.Select(r => r.SystemId).ToHashSet();
+
+        Assert.True(
+            ids.Count == rows.Count,
+            $"The {rendering} result contained duplicate SystemId values.");
+
+        return ids;
     }
 
     /// <summary>

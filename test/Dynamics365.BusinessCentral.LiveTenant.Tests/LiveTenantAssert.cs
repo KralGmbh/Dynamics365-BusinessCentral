@@ -42,4 +42,60 @@ internal static class LiveTenantAssert
             $"A collection that changed mid-read explains any result inside that bracket; " +
             $"nothing outside it is explained by tenant activity.");
     }
+
+    /// <summary>
+    /// Requires a set read between two reference reads to contain every member stable across the
+    /// bracket and no member absent from both sides of it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same instrument as <see cref="WithinBracket"/> for a comparison of identity rather than
+    /// size, and the two halves are not symmetric. A member both reference reads saw is one the
+    /// tenant held throughout, so its absence is the reading's fault and the check
+    /// <i>requires</i> it. A member only one of them saw appeared or disappeared while the three
+    /// reads ran, so either answer about it is defensible and the check <i>permits</i> it. What is
+    /// left is the finding: a member neither reference read ever contained, which no amount of
+    /// concurrent activity explains.
+    /// </para>
+    /// <para>
+    /// The offending members are named, not counted. This suite runs unattended and weekly, so a
+    /// failure that says only "one was missing" costs a reproduction; a failure that says which
+    /// one is usually the whole diagnosis.
+    /// </para>
+    /// <para>
+    /// Membership is decided by <typeparamref name="T"/>'s default equality, not by the comparer
+    /// the caller's sets were built with — enough for the identifiers this suite compares, and
+    /// worth knowing before passing a case-insensitive set of strings.
+    /// </para>
+    /// </remarks>
+    public static void SetWithinBracket<T>(
+        IReadOnlySet<T> first,
+        IReadOnlySet<T> second,
+        IReadOnlySet<T> actual,
+        string subject)
+    {
+        var required = first.Intersect(second).ToHashSet();
+        var permitted = first.Union(second).ToHashSet();
+        var missing = required.Except(actual).ToArray();
+        var unexpected = actual.Except(permitted).ToArray();
+
+        Assert.True(
+            missing.Length == 0 && unexpected.Length == 0,
+            $"{subject}: {Describe(missing, "stable member(s) missing")}, " +
+            $"{Describe(unexpected, "member(s) absent from both surrounding reads")}. " +
+            $"The reference reads measured {first.Count}/{second.Count} members around " +
+            $"{actual.Count} actual members.");
+    }
+
+    /// <summary>Names up to five offenders, so a failure diagnoses itself.</summary>
+    private static string Describe<T>(IReadOnlyCollection<T> members, string what)
+    {
+        if (members.Count == 0)
+            return $"0 {what}";
+
+        var named = string.Join(", ", members.Take(5));
+        var rest = members.Count > 5 ? $", and {members.Count - 5} more" : string.Empty;
+
+        return $"{members.Count} {what} ({named}{rest})";
+    }
 }

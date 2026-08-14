@@ -47,9 +47,6 @@ public sealed class TenantShapeTests(ITestOutputHelper output)
                 var response = await client.QueryRawAsync<JsonElement>($"{set}?$count=true&$top=1");
 
                 var honoured = response.TryGetProperty("@odata.count", out var countElement);
-                if (honoured)
-                    honoursCount++;
-
                 var count = honoured ? countElement.GetRawText() : "(not honoured)";
 
                 var rows = response.GetProperty("value");
@@ -71,6 +68,12 @@ public sealed class TenantShapeTests(ITestOutputHelper output)
                         .Select(c => $"{c}={rows[0].GetProperty(c).GetRawText()}");
                     output.WriteLine($"    sample: {string.Join(" ", samples)}");
                 }
+
+                // A count only qualifies after the rest of the response shape has proved usable.
+                // Otherwise the catch below can suppress a malformed value while leaving this
+                // candidate counted as a success.
+                if (honoured)
+                    honoursCount++;
             }
             catch (Exception ex)
             {
@@ -85,6 +88,15 @@ public sealed class TenantShapeTests(ITestOutputHelper output)
         Assert.Equal(Candidates.Length, honoursCount);
     }
 
+    /// <summary>
+    /// Prints the columns of the three sets the rest of the suite is written against, and requires
+    /// each of them to actually answer with a row.
+    /// </summary>
+    /// <remarks>
+    /// The report is the purpose; the assertion is what stops it becoming decoration. Every other
+    /// fact here reads one of these three sets, so an empty one is a precondition failure that
+    /// should be named here rather than surfacing as a confusing assertion somewhere downstream.
+    /// </remarks>
     [LiveTenantFact]
     public async Task Report_columns_of_the_sets_the_other_facts_use()
     {
@@ -94,13 +106,16 @@ public sealed class TenantShapeTests(ITestOutputHelper output)
         {
             var response = await client.QueryRawAsync<JsonElement>($"{set}?$top=1");
             var rows = response.GetProperty("value");
-            if (rows.GetArrayLength() == 0)
-            {
-                output.WriteLine($"{set}: empty");
-                continue;
-            }
+
+            Assert.True(
+                rows.GetArrayLength() > 0,
+                $"{set} answered no rows. Facts elsewhere in this suite are written against it, " +
+                "so they are about to fail for a reason that has nothing to do with the package.");
 
             var columns = rows[0].EnumerateObject().Select(p => p.Name).ToArray();
+
+            Assert.NotEmpty(columns);
+
             output.WriteLine($"--- {set} ({columns.Length}) ---");
             output.WriteLine(string.Join(", ", columns.Take(60)));
             output.WriteLine("");

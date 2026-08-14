@@ -44,9 +44,9 @@ jobs:
           BC_CLIENT_SECRET: ${{ secrets.BC_CLIENT_SECRET }}
         run: |
           missing=""
-          [ -z "$BC_TENANT_ID" ] && missing="$missing BC_TENANT_ID"
-          [ -z "$BC_CLIENT_ID" ] && missing="$missing BC_CLIENT_ID"
-          [ -z "$BC_CLIENT_SECRET" ] && missing="$missing BC_CLIENT_SECRET"
+          [ -z "${BC_TENANT_ID//[[:space:]]/}" ] && missing="$missing BC_TENANT_ID"
+          [ -z "${BC_CLIENT_ID//[[:space:]]/}" ] && missing="$missing BC_CLIENT_ID"
+          [ -z "${BC_CLIENT_SECRET//[[:space:]]/}" ] && missing="$missing BC_CLIENT_SECRET"
 
           if [ -n "$missing" ]; then
             echo "Missing tenant credentials:$missing" >&2
