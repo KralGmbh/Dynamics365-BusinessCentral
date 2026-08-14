@@ -63,8 +63,8 @@ public sealed class QueryStringCeilingTests(ITestOutputHelper output)
     [LiveTenantFact]
     public async Task A_query_string_just_under_the_default_ceiling_is_accepted()
     {
-        var warnings = new LengthWarningRecorder();
-        var client = LiveTenant.CreateClient(observer: warnings);
+        var wire = new RecordingObserver();
+        var client = LiveTenant.CreateClient(observer: wire);
 
         // 100 keys. Each or-clause costs roughly 65 encoded characters at this field-name and key
         // length — the field name is repeated per clause and every quote becomes %27 — so this
@@ -75,7 +75,7 @@ public sealed class QueryStringCeilingTests(ITestOutputHelper output)
             .Where(Filter.In<LdatSummaryRow>(x => x.ProductionOrderNo, OverLongKeySet(100)))
             .ToListAsync();
 
-        var warning = Assert.Single(warnings.Observed);
+        var warning = Assert.Single(wire.LengthWarnings);
 
         output.WriteLine(
             $"accepted: queryString={warning.QueryStringLength} url={warning.UrlLength} " +
@@ -84,21 +84,6 @@ public sealed class QueryStringCeilingTests(ITestOutputHelper output)
         // The band this fact exists to hold open: warned about, sent anyway, served.
         Assert.InRange(warning.QueryStringLength, 6_000, 8_000);
         Assert.False(warning.ExceedsLimit);
-    }
-
-    /// <summary>Captures <c>OnUrlLengthWarning</c> so the fact can assert on a measured length.</summary>
-    private sealed class LengthWarningRecorder : Diagnostics.IBusinessCentralObserver
-    {
-        public List<Diagnostics.BusinessCentralUrlLengthInfo> Observed { get; } = [];
-
-        public void OnUrlLengthWarning(Diagnostics.BusinessCentralUrlLengthInfo url) => Observed.Add(url);
-
-        public void OnRequestStarting(Diagnostics.BusinessCentralRequestInfo request) { }
-        public void OnRequestSucceeded(Diagnostics.BusinessCentralRequestInfo request) { }
-        public void OnRequestFailed(Diagnostics.BusinessCentralErrorInfo error) { }
-        public void OnTokenRequested() { }
-        public void OnTokenRefreshed(Diagnostics.BusinessCentralTokenInfo token) { }
-        public void OnDeserializationFailed(Diagnostics.BusinessCentralErrorInfo error) { }
     }
 
     /// <summary>

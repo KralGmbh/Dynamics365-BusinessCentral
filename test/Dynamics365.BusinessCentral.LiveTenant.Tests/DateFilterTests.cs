@@ -19,6 +19,13 @@ namespace Dynamics365.BusinessCentral.LiveTenant.Tests;
 /// which rows come back</b>, which is the only reason the change matters. That needs a tenant
 /// with real timestamps, and it is what these facts measure.
 /// </para>
+/// <para>
+/// Every comparison here spans several counts of a collection the tenant is still writing to, so
+/// each one is bracketed rather than compared exactly — see <see cref="LiveTenantAssert"/>. The
+/// bracket is the same instrument the paging facts use, for the same reason: an insertion between
+/// two requests would otherwise fail the fact in exactly the shape of the regression it exists to
+/// catch.
+/// </para>
 /// </remarks>
 public sealed class DateFilterTests(ITestOutputHelper output)
 {
@@ -26,10 +33,16 @@ public sealed class DateFilterTests(ITestOutputHelper output)
     /// A kindless <see cref="DateTime"/> selects exactly the rows an explicitly-UTC one does.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The boundary is read from the tenant rather than hard-coded, so the fact keeps discriminating
     /// as the data moves: a fixed date would eventually fall outside the data and compare two
     /// identical full-set counts, passing while testing nothing. The assertion that both counts sit
     /// strictly between zero and the total is what enforces that.
+    /// </para>
+    /// <para>
+    /// The kindless count is taken either side of the UTC one, so the two renderings are compared
+    /// across a measured window rather than assumed to have been taken at the same instant.
+    /// </para>
     /// </remarks>
     [LiveTenantFact]
     public async Task Kindless_DateTime_selects_the_same_rows_as_an_explicitly_utc_one()
@@ -41,13 +54,21 @@ public sealed class DateFilterTests(ITestOutputHelper output)
         var utc = DateTime.SpecifyKind(boundary, DateTimeKind.Utc);
 
         var total = await client.Query<ProdOrderLine>().CountAsync();
-        var kindlessCount = await CountFromAsync(client, kindless);
+
+        var kindlessBefore = await CountFromAsync(client, kindless);
         var utcCount = await CountFromAsync(client, utc);
+        var kindlessAfter = await CountFromAsync(client, kindless);
 
-        output.WriteLine($"boundary={boundary:O} total={total} kindless={kindlessCount} utc={utcCount}");
+        output.WriteLine($"boundary={boundary:O} total={total} " +
+                         $"kindless={kindlessBefore}..{kindlessAfter} utc={utcCount}");
 
-        Assert.Equal(utcCount, kindlessCount);
-        Assert.InRange(kindlessCount, 1, total - 1);
+        LiveTenantAssert.WithinBracket(
+            kindlessBefore, kindlessAfter, utcCount,
+            "An explicitly-UTC filter against the kindless one measured either side of it");
+
+        // Not the full set and not empty: a boundary that stopped discriminating would make the
+        // comparison above true of two identical numbers and prove nothing.
+        Assert.InRange(utcCount, 1, total - 1);
     }
 
     /// <summary>
@@ -64,6 +85,12 @@ public sealed class DateFilterTests(ITestOutputHelper output)
     /// is nothing to measure — so it reports and returns rather than asserting a difference that
     /// cannot exist. CI runners are usually UTC; a developer machine in Vienna is where this one
     /// actually bites, which is exactly the asymmetry that let the 1.0 bug survive.
+    /// </para>
+    /// <para>
+    /// Four counts, so the identity being checked — that the difference between the two readings
+    /// <i>is</i> the rows in the gap — is allowed the drift the tenant caused while they were
+    /// taken, and no more. When the gap is smaller than that drift the fact says so and stops
+    /// rather than asserting on noise.
     /// </para>
     /// </remarks>
     [LiveTenantFact]
@@ -85,7 +112,7 @@ public sealed class DateFilterTests(ITestOutputHelper output)
         var kindless = DateTime.SpecifyKind(boundary, DateTimeKind.Unspecified);   // 2.0: already UTC
         var asLocal = DateTime.SpecifyKind(boundary, DateTimeKind.Local);          // 1.0: shifted
 
-        var kindlessCount = await CountFromAsync(client, kindless);
+        var kindlessBefore = await CountFromAsync(client, kindless);
         var localCount = await CountFromAsync(client, asLocal);
 
         // The two instants differ by the machine's offset. Count the rows that fall in that gap
@@ -98,15 +125,28 @@ public sealed class DateFilterTests(ITestOutputHelper output)
                 .And(Filter.LessThan<ProdOrderLine>(x => x.EndingDateTime, DateTime.SpecifyKind(later, DateTimeKind.Utc))))
             .CountAsync();
 
+        var kindlessAfter = await CountFromAsync(client, kindless);
+
+        // How much the tenant moved under the four reads. It is the only tolerance this fact
+        // grants, and it is measured rather than chosen.
+        var drift = Math.Abs(kindlessAfter - kindlessBefore);
+        var difference = Math.Abs(kindlessBefore - localCount);
+
         output.WriteLine(
-            $"offset={offset} kindless(2.0)={kindlessCount} local(1.0)={localCount} gap={gap} rows");
+            $"offset={offset} kindless(2.0)={kindlessBefore}..{kindlessAfter} local(1.0)={localCount} " +
+            $"difference={difference} gap={gap} rows drift={drift}");
 
-        Assert.Equal(gap, Math.Abs(kindlessCount - localCount));
+        LiveTenantAssert.WithinBracket(
+            gap - drift, gap + drift, difference,
+            "The rows the 1.0 reading would have moved, against the rows in the timezone gap");
 
-        if (gap == 0)
-            output.WriteLine("No rows fall in the gap at this boundary, so the two agree by luck, not by design.");
+        if (gap <= drift)
+            output.WriteLine(
+                $"The gap ({gap} rows) is within the drift the tenant caused while measuring " +
+                $"({drift}), so this run cannot say the two readings differ — only that the " +
+                "difference is explained. Not a failure; the identity above still held.");
         else
-            Assert.NotEqual(kindlessCount, localCount);
+            Assert.NotEqual(kindlessBefore, localCount);
     }
 
     private static Task<long> CountFromAsync(Client.IBusinessCentralClient client, DateTime from) =>
@@ -131,7 +171,11 @@ public sealed class DateFilterTests(ITestOutputHelper output)
             .Top(1)
             .FirstOrDefaultAsync();
 
-        Assert.NotNull(row);
+        Assert.True(
+            row is not null,
+            "No row with a real timestamp past the first 1,000. This fact needs a datetime column " +
+            "with spread-out values; run TenantShapeTests and pick another set rather than " +
+            "lowering the skip.");
 
         return row!.EndingDateTime.UtcDateTime;
     }

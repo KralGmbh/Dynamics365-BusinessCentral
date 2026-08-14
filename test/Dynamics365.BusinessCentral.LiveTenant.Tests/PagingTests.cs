@@ -20,42 +20,71 @@ namespace Dynamics365.BusinessCentral.LiveTenant.Tests;
 /// could still return the right <i>number</i> of rows.
 /// </para>
 /// <para>
-/// <b>The count is bracketed, not sampled.</b> <c>$count</c> and the paged read are separate
-/// requests against a live tenant, so a row inserted or deleted between them would fail an exact
-/// comparison while paging was working perfectly — a flake that looks exactly like the regression
-/// this suite exists to catch, which is the worst kind. Each fact therefore counts before and
-/// after, and requires the fetched total to fall within that bracket. When nothing changed the two
-/// counts are equal and the check is exact; when something did, the tolerance is the measured size
-/// of the change rather than a guess. A dropped or duplicated page still fails, because it moves
-/// the total far outside a bracket that only ever spans concurrent tenant activity.
+/// <b>And both facts check that paging happened at all.</b> A read that came back complete in a
+/// single response satisfies every row-level assertion here while exercising no continuation
+/// whatsoever — so each fact first establishes that the set could not have arrived in one page:
+/// by counting the requests the read issued, or by holding a first page that carried a
+/// continuation. Without that, the day Business Central stops honouring
+/// <c>Prefer: odata.maxpagesize</c> is the day these facts go quietly vacuous.
+/// </para>
+/// <para>
+/// <b>The count is bracketed, not sampled</b> — see <see cref="LiveTenantAssert"/>.
 /// </para>
 /// </remarks>
 public sealed class PagingTests(ITestOutputHelper output)
 {
+    /// <summary>Page preference for the first fact. Small enough to force several continuations.</summary>
+    private const int RequestedPageSize = 500;
+
     /// <summary>
     /// The everyday guard: a page-size preference the client sends forces several continuations
     /// over a small set, and every row arrives exactly once.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Deliberately cheap and deterministic — ~1,900 rows in pages of 500. This is the fact that
     /// should stay fast enough that nobody is tempted to skip the suite.
+    /// </para>
+    /// <para>
+    /// The continuations are counted rather than inferred. <c>ToPageAsync</c> cannot be used to
+    /// inspect the first page here, because single-page reads deliberately send no
+    /// <c>odata.maxpagesize</c> preference — on a one-shot request it would silently truncate the
+    /// result. So the proof comes from the wire instead: <c>n</c> rows cannot arrive in fewer than
+    /// <c>ceil(n / 500)</c> requests unless a page carried more than the 500 asked for, which is
+    /// exactly the regression this guards.
+    /// </para>
     /// </remarks>
     [LiveTenantFact]
     public async Task Requested_page_size_forces_continuations_and_returns_every_row_once()
     {
-        var client = LiveTenant.CreateClient();
+        var wire = new RecordingObserver();
+        var client = LiveTenant.CreateClient(observer: wire);
 
         var before = await client.Query<LdatSummaryRow>().CountAsync();
-        Assert.True(before > 500, $"This fact needs a set larger than one requested page; got {before}.");
+        Assert.True(
+            before > RequestedPageSize,
+            $"This fact needs a set larger than one requested page; got {before}.");
 
-        var rows = await client.Query<LdatSummaryRow>().PageSize(500).ToAllAsync();
+        wire.Clear();
+        var rows = await client.Query<LdatSummaryRow>().PageSize(RequestedPageSize).ToAllAsync();
+        var requests = wire.Requests.Count;
 
         var after = await client.Query<LdatSummaryRow>().CountAsync();
 
         output.WriteLine($"LdatSummary: $count={before}..{after}, fetched={rows.Count}, " +
-                         $"pages≈{Math.Ceiling(before / 500d)}");
+                         $"requests={requests} at odata.maxpagesize={RequestedPageSize}");
 
-        AssertCompleteWithin(before, after, rows.Count);
+        var minimumRequests = (int)Math.Ceiling(rows.Count / (double)RequestedPageSize);
+
+        Assert.True(
+            requests >= minimumRequests,
+            $"{rows.Count} rows arrived in {requests} request(s), so at least one page carried " +
+            $"more than the {RequestedPageSize} rows preferred — {minimumRequests} were needed. " +
+            $"Either Business Central stopped honouring Prefer: odata.maxpagesize or the client " +
+            $"stopped sending it; in both cases this fact was about to pass without following a " +
+            $"single continuation.");
+
+        LiveTenantAssert.WithinBracket(before, after, rows.Count, "Paged read of LdatSummary");
         Assert.Equal(rows.Count, rows.Select(r => r.SystemId).Distinct().Count());
     }
 
@@ -102,22 +131,7 @@ public sealed class PagingTests(ITestOutputHelper output)
 
         Assert.True(firstPage.Items.Count < before);
 
-        AssertCompleteWithin(before, after, rows.Count);
+        LiveTenantAssert.WithinBracket(before, after, rows.Count, "Paged read of LDATSalesLine");
         Assert.Equal(rows.Count, rows.Select(r => r.SystemId).Distinct().Count());
-    }
-
-    /// <summary>
-    /// Requires <paramref name="fetched"/> to lie within the bracket the two counts describe.
-    /// </summary>
-    private static void AssertCompleteWithin(long before, long after, int fetched)
-    {
-        var low = Math.Min(before, after);
-        var high = Math.Max(before, after);
-
-        Assert.True(
-            fetched >= low && fetched <= high,
-            $"Paged read returned {fetched} rows, outside the {low}..{high} the endpoint reported " +
-            $"either side of it. A count that moved during the read explains a result inside that " +
-            $"bracket; nothing outside it is explained by tenant activity.");
     }
 }

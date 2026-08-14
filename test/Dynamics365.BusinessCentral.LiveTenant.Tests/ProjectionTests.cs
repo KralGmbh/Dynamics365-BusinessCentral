@@ -59,30 +59,68 @@ public sealed class ProjectionTests(ITestOutputHelper output)
     /// is one SaaS tenant. The on-prem OData stack is unmeasured, which is why the package's
     /// column matching is <c>OrdinalIgnoreCase</c> rather than the docs asserting a rule.
     /// </para>
+    /// <para>
+    /// <b>Canonical means what <c>$metadata</c> publishes</b>, not a spelling written into this
+    /// file. The second half of the claim is a relationship between the two documents the tenant
+    /// serves — the schema and the page — so it is asserted as one, ordinally. Hard-coding the
+    /// spellings would pin a value the tenant owns and, worse, would leave a drift to
+    /// <c>systemid</c> passing: case-insensitive predicates accept anything, and rejecting only
+    /// the all-caps spelling that was sent rejects almost nothing.
+    /// </para>
     /// </remarks>
     [LiveTenantFact]
     public async Task Select_is_case_insensitive_and_answered_in_the_pages_own_casing()
     {
         var client = LiveTenant.CreateClient();
 
-        // Deliberately the wrong casing for both: the page answers SystemId / serialNo.
+        var metadata = BusinessCentralMetadata.Parse(await client.GetMetadataAsync());
+
+        Assert.True(
+            metadata.TryGetColumns("LdatSummary", out var columns),
+            "LdatSummary is not published on this tenant; this fact needs a page whose canonical " +
+            "casing can be read from $metadata.");
+
+        var systemId = Canonical(columns, "SystemId");
+        var serialNo = Canonical(columns, "serialNo");
+
+        // Deliberately the wrong casing for both. That the request differs from the canonical
+        // spelling at all is what makes the probe meaningful, so it is checked rather than assumed.
+        var askedSystemId = systemId.ToUpperInvariant();
+        var askedSerialNo = serialNo.ToUpperInvariant();
+
+        Assert.NotEqual(systemId, askedSystemId, StringComparer.Ordinal);
+        Assert.NotEqual(serialNo, askedSerialNo, StringComparer.Ordinal);
+
         var response = await client.QueryRawAsync<JsonElement>(
-            "LdatSummary?$select=SYSTEMID,SERIALNO&$top=1");
+            $"LdatSummary?$select={askedSystemId},{askedSerialNo}&$top=1");
 
         var rows = response.GetProperty("value");
         Assert.True(rows.GetArrayLength() > 0, "Expected at least one row.");
 
         var names = rows[0].EnumerateObject().Select(p => p.Name).ToArray();
-        output.WriteLine($"asked for SYSTEMID,SERIALNO — answered: {string.Join(", ", names)}");
+        output.WriteLine($"asked for {askedSystemId},{askedSerialNo} — $metadata says " +
+                         $"{systemId},{serialNo} — answered: {string.Join(", ", names)}");
 
         // The request was accepted at all: that is the case-insensitivity finding.
-        Assert.Contains(names, n => n.Equals("SystemId", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(names, n => n.Equals("serialNo", StringComparison.OrdinalIgnoreCase));
-
-        // And the answer came back in the page's casing, not ours.
-        Assert.DoesNotContain("SYSTEMID", names);
-        Assert.DoesNotContain("SERIALNO", names);
+        // And it was answered in the casing $metadata publishes, character for character.
+        Assert.Contains(systemId, names, StringComparer.Ordinal);
+        Assert.Contains(serialNo, names, StringComparer.Ordinal);
     }
+
+    /// <summary>
+    /// The <c>$metadata</c> spelling of a column, matched case-insensitively.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="BusinessCentralMetadataModel.TryGetColumns"/> answers a case-insensitive set
+    /// that holds the document's own strings, so enumerating it is how the canonical casing is
+    /// recovered — the package itself never needs it, because its column matching is
+    /// <c>OrdinalIgnoreCase</c> by design.
+    /// </remarks>
+    private static string Canonical(IReadOnlySet<string> columns, string column) =>
+        columns.FirstOrDefault(c => c.Equals(column, StringComparison.OrdinalIgnoreCase))
+        ?? throw new InvalidOperationException(
+            $"$metadata does not publish a '{column}' column on LdatSummary. Pick a column that " +
+            "exists rather than relaxing the comparison.");
 
     /// <summary>
     /// The derived projection is what makes a wide page affordable: the same rows, without it,
