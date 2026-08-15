@@ -90,10 +90,19 @@ public sealed class DateFilterTests(ITestOutputHelper output)
     /// discriminates; the early return remains useful for an ordinary local run under UTC.
     /// </para>
     /// <para>
-    /// Four counts, so the identity being checked — that the difference between the two readings
-    /// <i>is</i> the rows in the gap — is allowed the drift the tenant caused while they were
-    /// taken, and no more. When the gap is smaller than that drift the fact says so and stops
-    /// rather than asserting on noise.
+    /// The identity being checked is <c>local == kindless ± gap</c>: plus when the local
+    /// interpretation moves the boundary earlier, minus when it moves it later. It spans
+    /// <b>two</b> populations that must be measured separately: the rows above the boundary, and
+    /// the rows inside the timezone window. Both are therefore read either side of the reading
+    /// under test. Under the workflow's positive offset, bracketing only the first would leave the
+    /// fact blind in a specific and unlucky way — a row inserted or deleted inside the window
+    /// changes the gap and the machine-local count while every <c>&gt;= boundary</c> count stays put,
+    /// so the tolerance would measure zero at exactly the moment it was needed, and the fact would
+    /// fail with the conversion working correctly.
+    /// </para>
+    /// <para>
+    /// The tolerance is the sum of what each population was seen to move, and nothing else. When
+    /// that movement outweighs the gap the fact says so and stops rather than asserting on noise.
     /// </para>
     /// </remarks>
     [LiveTenantFact]
@@ -117,41 +126,59 @@ public sealed class DateFilterTests(ITestOutputHelper output)
         var kindless = DateTime.SpecifyKind(boundary, DateTimeKind.Unspecified);   // 2.0: already UTC
         var asLocal = DateTime.SpecifyKind(boundary, DateTimeKind.Local);          // 1.0: shifted
 
+        // The two instants differ by the machine's offset. The rows between them are what the 1.0
+        // reading additionally selects in a positive-offset zone and excludes in a negative one.
+        var kindlessInstant = DateTime.SpecifyKind(kindless, DateTimeKind.Utc);
+        var localInstant = asLocal.ToUniversalTime();
+        var localIsEarlier = localInstant < kindlessInstant;
+        var earlier = localIsEarlier ? localInstant : kindlessInstant;
+        var later = localIsEarlier ? kindlessInstant : localInstant;
+
+        // Both populations are read either side of the reading under test. Under the workflow's
+        // positive offset, a row inside the timezone window changes the gap while leaving every
+        // count above the boundary untouched.
         var kindlessBefore = await CountFromAsync(client, kindless);
+        var gapBefore = await CountBetweenAsync(client, earlier, later);
+
         var localCount = await CountFromAsync(client, asLocal);
 
-        // The two instants differ by the machine's offset. Count the rows that fall in that gap
-        // directly, so the difference is explained rather than merely observed.
-        var earlier = asLocal.ToUniversalTime() < kindless ? asLocal.ToUniversalTime() : kindless;
-        var later = asLocal.ToUniversalTime() < kindless ? kindless : asLocal.ToUniversalTime();
-
-        var gap = await client.Query<ProdOrderLine>()
-            .Where(Filter.GreaterOrEqual<ProdOrderLine>(x => x.EndingDateTime, DateTime.SpecifyKind(earlier, DateTimeKind.Utc))
-                .And(Filter.LessThan<ProdOrderLine>(x => x.EndingDateTime, DateTime.SpecifyKind(later, DateTimeKind.Utc))))
-            .CountAsync();
-
+        var gapAfter = await CountBetweenAsync(client, earlier, later);
         var kindlessAfter = await CountFromAsync(client, kindless);
 
-        // How much the tenant moved under the four reads. It is the only tolerance this fact
-        // grants, and it is measured rather than chosen.
-        var drift = Math.Abs(kindlessAfter - kindlessBefore);
-        var difference = Math.Abs(kindlessBefore - localCount);
+        // In a positive-offset zone the local boundary is earlier: local == kindless + gap. In a
+        // negative-offset zone it is later: local == kindless - gap. Pairing the independent
+        // minima/maxima this way prevents movement in the two populations from cancelling out.
+        var kindlessLow = Math.Min(kindlessBefore, kindlessAfter);
+        var kindlessHigh = Math.Max(kindlessBefore, kindlessAfter);
+        var gapLow = Math.Min(gapBefore, gapAfter);
+        var gapHigh = Math.Max(gapBefore, gapAfter);
+        var low = localIsEarlier ? kindlessLow + gapLow : kindlessLow - gapHigh;
+        var high = localIsEarlier ? kindlessHigh + gapHigh : kindlessHigh - gapLow;
+        var relationship = localIsEarlier ? "kindless + gap" : "kindless - gap";
 
         output.WriteLine(
-            $"offset={offset} kindless(2.0)={kindlessBefore}..{kindlessAfter} local(1.0)={localCount} " +
-            $"difference={difference} gap={gap} rows drift={drift}");
+            $"offset={offset} kindless(2.0)={kindlessBefore}..{kindlessAfter} " +
+            $"gap={gapBefore}..{gapAfter} rows ({relationship}) → " +
+            $"local(1.0) expected {low}..{high}, got {localCount}");
 
         LiveTenantAssert.WithinBracket(
-            gap - drift, gap + drift, difference,
-            "The rows the 1.0 reading would have moved, against the rows in the timezone gap");
+            low, high, localCount,
+            "The 1.0 machine-local reading, against the 2.0 reading adjusted by the timezone gap");
 
-        if (gap <= drift)
-            output.WriteLine(
-                $"The gap ({gap} rows) is within the drift the tenant caused while measuring " +
-                $"({drift}), so this run cannot say the two readings differ — only that the " +
-                "difference is explained. Not a failure; the identity above still held.");
-        else
+        // Whether the two readings can be shown to differ at all. In either direction they are
+        // provably apart when the smallest the gap was seen to be outweighs how far the kindless
+        // population moved. Below that, the identity held but says nothing.
+        var gapFloor = gapLow;
+        var kindlessDrift = Math.Abs(kindlessAfter - kindlessBefore);
+
+        if (gapFloor > kindlessDrift)
             Assert.NotEqual(kindlessBefore, localCount);
+        else
+            output.WriteLine(
+                $"The gap ({gapFloor} rows) does not outweigh the {kindlessDrift} rows that moved " +
+                "above the boundary while measuring, so this run cannot say the two readings " +
+                "differ — only that the difference is explained. Not a failure; the identity " +
+                "above still held.");
     }
 
     /// <summary>
@@ -180,6 +207,25 @@ public sealed class DateFilterTests(ITestOutputHelper output)
             "the same instant and neither fact in this class can fail. The workflow must run these " +
             "under a non-UTC zone — see TZ in .github/workflows/live-tenant.yml.");
     }
+
+    /// <summary>Rows inside the timezone window, <c>[from, to)</c>.</summary>
+    /// <remarks>
+    /// A population of its own, and the reason this fact reads five counts rather than three: rows
+    /// Under the workflow's positive-offset clock these rows are <i>below</i> the kindless boundary,
+    /// so they never touch a <c>&gt;= boundary</c> count. A tolerance derived only from those counts
+    /// is blind to exactly the activity that would break the identity being checked. Negative
+    /// offsets put the window above the boundary; the caller handles that by subtracting it.
+    /// </remarks>
+    private static Task<long> CountBetweenAsync(
+        Client.IBusinessCentralClient client,
+        DateTime from,
+        DateTime to) =>
+        client.Query<ProdOrderLine>()
+            .Where(Filter.GreaterOrEqual<ProdOrderLine>(
+                    x => x.EndingDateTime, DateTime.SpecifyKind(from, DateTimeKind.Utc))
+                .And(Filter.LessThan<ProdOrderLine>(
+                    x => x.EndingDateTime, DateTime.SpecifyKind(to, DateTimeKind.Utc))))
+            .CountAsync();
 
     private static Task<long> CountFromAsync(Client.IBusinessCentralClient client, DateTime from) =>
         client.Query<ProdOrderLine>()
