@@ -179,8 +179,8 @@ public sealed class PagingTests(ITestOutputHelper output)
                 $"Follow-up request {i} of {requests.Length - 1} carried no $skiptoken, so it was " +
                 $"not the continuation the server issued: {query}");
 
-            Assert.True(
-                !query.Contains("$skip=", StringComparison.Ordinal),
+            Assert.False(
+                query.Contains("$skip=", StringComparison.Ordinal),
                 $"Follow-up request {i} of {requests.Length - 1} carried a client-generated " +
                 $"$skip. That is 1.0 offset paging, which skips or duplicates rows when the " +
                 $"collection changes underneath it: {query}");
