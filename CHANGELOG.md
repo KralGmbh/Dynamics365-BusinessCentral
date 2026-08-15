@@ -7,6 +7,66 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-15
+
+**Stable.** The API is unchanged from `2.0.0-rc.1`. What changed is the evidence behind it: the
+behaviours this release is built on are now measured by a test suite that runs against a real
+Business Central tenant, and the release candidate has run in production.
+
+Two independent inputs closed the gap the rc left open.
+
+**A production field test.** A consumer ran `1.0.0 → 2.0.0-rc.1` in production across two working
+days: 1,029 observed Business Central calls, zero BC-attributable failures, no rollback, and a
+**~93% reduction in Entra token round trips** (0.305–0.428 token calls per BC call before, 0.023
+after, at the highest call volume in the comparison set). That last number is the singleton token
+provider working as designed — it was the fix for a real 1.0 bug, where token state on a transient
+typed client meant re-authenticating far more often than necessary. BC call latency and
+user-visible request latency both stayed inside day-to-day variance; no latency claim is made.
+
+**A live-tenant test suite** (`test/Dynamics365.BusinessCentral.LiveTenant.Tests`). Every test in
+this repository previously ran through a scripted transport, which can prove what the client sends
+but never that Business Central accepts it. The measured behaviours this package's design rests on
+were therefore asserted only in prose, and would have survived a refactor that broke them. They are
+now facts that fail:
+
+- **Server-driven paging, end to end.** With no page preference the tenant paged at 20,000 rows and
+  issued an `@odata.nextLink`; following it returned all 29,709 rows, each exactly once. This is the
+  shape 1.0 could never reach — its `$top=1000` pacing meant the server never had to truncate, so no
+  continuation was ever emitted and the client's inability to follow one stayed invisible.
+- **Kindless `DateTime` filters.** A `DateTimeKind.Unspecified` value now filters identically to an
+  explicitly-UTC one; the 1.0 machine-local reading selected a measurably different set — one row,
+  at the boundary measured, in a set of 329,485. Small, and silent, which is the point.
+- `$select` is case-insensitive and answered in the page's own casing (M1, pinned at last).
+- Native `in` is `501` without `$schemaversion=2.1` and matches the or-chain with it (S1).
+- An over-length query string is answered `414 URI Too Long`, and one inside the warning band is
+  still served (S4/S5).
+- Derived `$select` resolves against `$metadata` for every annotated type (M4, against real EDMX).
+
+The suite skips rather than fails without credentials, never runs on `pull_request` (secrets are
+unavailable to fork PRs), and is read-only. Numbers the tenant owns — page size, row counts — are
+reported rather than asserted, so an administrative change cannot masquerade as a regression.
+
+### Changed
+
+- `PackageValidationBaselineVersion` moves to `2.0.0-rc.1` on both packages, making the release
+  candidate the compatibility baseline for the stable release.
+- The live-tenant evidence is hardened against mutable data and quietly vacuous probes: paired
+  filter reads are bracketed — including both separately moving populations in the timezone
+  comparison — incomplete shape probes no longer count as successes, credential checks reject
+  whitespace-only values, and case-insensitivity probes always change the requested casing and
+  prove the projection was applied. The scheduled run fixes a non-UTC timezone, paging is verified
+  from the continuation request itself, and URI probes straddle the measured ceiling.
+- The SonarCloud coverage step is scoped to the unit-test project rather than the solution. The
+  live-tenant project targets `net10.0` only — one tenant round trip per fact is enough, and what
+  differs between TFMs is the compiled surface, which the correctness gate and package validation
+  already cover — so `-f net8.0` over the whole solution no longer restores. The correctness gate
+  is untouched and still runs all three TFMs.
+
+### Fixed
+
+- Nothing. No code defect was found in the release candidate by the field test, by an external
+  release-readiness review, or by the new suite.
+
 ## [2.0.0-rc.1] - 2026-08-05
 
 **Release candidate.** The 2.0.0 surface, frozen — no further API changes are planned before
@@ -842,7 +902,8 @@ First stable release.
 Initial pre-release line: OData querying with fluent filters, client-credentials
 authentication, DI integration, multi-targeting and NuGet packaging.
 
-[Unreleased]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-rc.1...HEAD
+[Unreleased]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-rc.1...v2.0.0
 [2.0.0-rc.1]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-alpha.7...v2.0.0-rc.1
 [2.0.0-alpha.7]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-alpha.6...v2.0.0-alpha.7
 [2.0.0-alpha.6]: https://github.com/KralGmbh/Dynamics365-BusinessCentral/compare/v2.0.0-alpha.5...v2.0.0-alpha.6

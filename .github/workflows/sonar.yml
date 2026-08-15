@@ -62,10 +62,24 @@ jobs:
           # Coverage stays single-TFM on purpose: the same tests over the same sources
           # three times would not move the number, and multi-TFM collection just merges
           # duplicate hits. The correctness gate above is what runs all three.
-          dotnet build Dynamics365.BusinessCentral.slnx --no-incremental -c Release -f net8.0
+          #
+          # Scoped to the unit suite rather than the solution because the live-tenant project
+          # targets net10.0 only — passing -f net8.0 over the solution fails its restore
+          # (NETSDK1005). Scoping is right on its own terms too: that suite needs a tenant, so
+          # here it would contribute nothing but skipped tests to the coverage number.
+          dotnet build test/Dynamics365.BusinessCentral.Tests/Dynamics365.BusinessCentral.Tests.csproj \
+            --no-incremental -c Release -f net8.0
+
+          # The scanner only analyzes what is built between begin and end, and nothing above
+          # references the live-tenant project — so without this line its sources would be
+          # silently absent from analysis and from the quality gate. Built, not tested: the
+          # facts need a tenant, and coverage stays scoped to the unit suite. Its own TFM
+          # (net10.0), which is why it could not ride along on the -f net8.0 build.
+          dotnet build test/Dynamics365.BusinessCentral.LiveTenant.Tests/Dynamics365.BusinessCentral.LiveTenant.Tests.csproj \
+            --no-incremental -c Release
 
           dotnet-coverage collect \
-            "dotnet test Dynamics365.BusinessCentral.slnx -c Release -f net8.0 --no-build" \
+            "dotnet test test/Dynamics365.BusinessCentral.Tests/Dynamics365.BusinessCentral.Tests.csproj -c Release -f net8.0 --no-build" \
             -f xml -o coverage.xml
 
           dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
