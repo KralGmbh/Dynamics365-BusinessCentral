@@ -18,6 +18,21 @@ namespace Dynamics365.BusinessCentral.LiveTenant.Tests;
 /// is the size of what actually happened. A real defect still fails, because it moves the result
 /// far outside a window that only ever spans concurrent tenant activity.
 /// </para>
+/// <para>
+/// <b>What this deliberately does not do.</b> Two endpoint reads bound movement that persists, not
+/// movement that reverses: a row inserted and deleted again between them leaves both counts equal
+/// while the read in the middle legitimately saw it, and a delete-then-reinsert does the inverse.
+/// No two-point bracket can see that, and the alternatives are worse rather than better — an exact
+/// comparison fails on ordinary drift as well, and this endpoint offers no snapshot isolation to
+/// read under. An immutable subset would solve it and this tenant has none: every set large enough
+/// to force server paging is one the business is still writing to.
+/// </para>
+/// <para>
+/// So the residual is accepted, named here, and kept small by construction: the bracketed reads are
+/// issued back to back, seconds apart, and the drift has measured zero on every run of this suite
+/// to date. If that stops being true the answer is a quieter sample, not a wider tolerance — a
+/// bracket that has to be loosened to stay green has stopped measuring anything.
+/// </para>
 /// </remarks>
 internal static class LiveTenantAssert
 {

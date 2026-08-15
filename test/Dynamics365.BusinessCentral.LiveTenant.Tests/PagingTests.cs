@@ -67,22 +67,27 @@ public sealed class PagingTests(ITestOutputHelper output)
 
         wire.Clear();
         var rows = await client.Query<LdatSummaryRow>().PageSize(RequestedPageSize).ToAllAsync();
-        var requests = wire.Requests.Count;
+        var pageRequests = wire.Requests.ToArray();
 
         var after = await client.Query<LdatSummaryRow>().CountAsync();
 
         output.WriteLine($"LdatSummary: $count={before}..{after}, fetched={rows.Count}, " +
-                         $"requests={requests} at odata.maxpagesize={RequestedPageSize}");
+                         $"requests={pageRequests.Length} at odata.maxpagesize={RequestedPageSize}");
 
         var minimumRequests = (int)Math.Ceiling(rows.Count / (double)RequestedPageSize);
 
         Assert.True(
-            requests >= minimumRequests,
-            $"{rows.Count} rows arrived in {requests} request(s), so at least one page carried " +
-            $"more than the {RequestedPageSize} rows preferred — {minimumRequests} were needed. " +
-            $"Either Business Central stopped honouring Prefer: odata.maxpagesize or the client " +
-            $"stopped sending it; in both cases this fact was about to pass without following a " +
-            $"single continuation.");
+            pageRequests.Length >= minimumRequests,
+            $"{rows.Count} rows arrived in {pageRequests.Length} request(s), so at least one page " +
+            $"carried more than the {RequestedPageSize} rows preferred — {minimumRequests} were " +
+            $"needed. Either Business Central stopped honouring Prefer: odata.maxpagesize or the " +
+            $"client stopped sending it; in both cases this fact was about to pass without " +
+            $"following a single continuation.");
+
+        // Counting requests proves the page size was honoured, not that the client followed the
+        // server's cursor: 1.0-style $top/$skip pacing at 500 makes the same number of requests
+        // and returns the same rows. The URLs are what tell the two apart.
+        AssertEveryFollowUpIsAServerContinuation(pageRequests);
 
         LiveTenantAssert.WithinBracket(before, after, rows.Count, "Paged read of LdatSummary");
         Assert.Equal(rows.Count, rows.Select(r => r.SystemId).Distinct().Count());
@@ -135,15 +140,50 @@ public sealed class PagingTests(ITestOutputHelper output)
 
         Assert.True(firstPage.Items.Count < before);
 
-        Assert.True(
-            pageRequests.Length > 1,
-            "ToAllAsync made no follow-up request, so it did not follow a continuation.");
-
-        var continuationQuery = Uri.UnescapeDataString(new Uri(pageRequests[1]).Query);
-        Assert.Contains("$skiptoken=", continuationQuery, StringComparison.Ordinal);
-        Assert.DoesNotContain("$skip=", continuationQuery, StringComparison.Ordinal);
+        AssertEveryFollowUpIsAServerContinuation(pageRequests);
 
         LiveTenantAssert.WithinBracket(before, after, rows.Count, "Paged read of LDATSalesLine");
         Assert.Equal(rows.Count, rows.Select(r => r.SystemId).Distinct().Count());
+    }
+
+    /// <summary>
+    /// Requires every request after the first to be the cursor Business Central issued, rather
+    /// than a window this client computed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the difference between 1.0 and 2.0 expressed on the wire, and it is the only place
+    /// it can be expressed. Rows alone cannot tell the two apart: client-generated
+    /// <c>$top</c>/<c>$skip</c> pacing over a quiet collection returns the same rows, the same
+    /// count and the same distinct keys as following a continuation, in the same number of
+    /// requests. What differs is the URL — an opaque <c>$skiptoken</c> the server chose, and no
+    /// <c>$skip</c> the client invented.
+    /// </para>
+    /// <para>
+    /// Applied to <b>every</b> follow-up rather than the first, because a client that followed one
+    /// continuation and then resumed offset paging would be exactly as broken.
+    /// </para>
+    /// </remarks>
+    private static void AssertEveryFollowUpIsAServerContinuation(string[] requests)
+    {
+        Assert.True(
+            requests.Length > 1,
+            "The read made no follow-up request, so no continuation was followed.");
+
+        for (var i = 1; i < requests.Length; i++)
+        {
+            var query = Uri.UnescapeDataString(new Uri(requests[i]).Query);
+
+            Assert.True(
+                query.Contains("$skiptoken=", StringComparison.Ordinal),
+                $"Follow-up request {i} of {requests.Length - 1} carried no $skiptoken, so it was " +
+                $"not the continuation the server issued: {query}");
+
+            Assert.True(
+                !query.Contains("$skip=", StringComparison.Ordinal),
+                $"Follow-up request {i} of {requests.Length - 1} carried a client-generated " +
+                $"$skip. That is 1.0 offset paging, which skips or duplicates rows when the " +
+                $"collection changes underneath it: {query}");
+        }
     }
 }
