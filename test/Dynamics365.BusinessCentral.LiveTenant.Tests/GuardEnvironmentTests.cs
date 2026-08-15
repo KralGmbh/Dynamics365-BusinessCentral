@@ -94,6 +94,39 @@ public sealed class GuardEnvironmentTests
     }
 
     /// <summary>
+    /// The sandbox name in the right position does not make an untrusted host safe to send a
+    /// token to.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The environment check reads the path, so every URL here would have satisfied it. Each one
+    /// would then have received a genuine access token as a bearer credential, because these tests
+    /// authenticate for real — and the app registration's sandbox-only grant constrains which
+    /// Business Central environment a token opens, not who is handed it.
+    /// </para>
+    /// <para>
+    /// The suffix case is the one worth naming: <c>api.businesscentral.dynamics.com.evil.test</c>
+    /// ends with the expected host and is a different authority, which is why the check is
+    /// equality rather than <see cref="string.EndsWith(string, StringComparison)"/>. The
+    /// <c>http</c> case is the same credential on the wire in clear text, and the port case is a
+    /// different listener on a name that looks right.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("https://attacker.example/v2.0/tenant/KRALTEST/ODataV4")]
+    [InlineData("https://api.businesscentral.dynamics.com.evil.test/v2.0/tenant/KRALTEST/ODataV4")]
+    [InlineData("https://evil.test/api.businesscentral.dynamics.com/v2.0/tenant/KRALTEST/ODataV4")]
+    [InlineData("http://api.businesscentral.dynamics.com/v2.0/tenant/KRALTEST/ODataV4")]
+    [InlineData("https://api.businesscentral.dynamics.com:8443/v2.0/tenant/KRALTEST/ODataV4")]
+    public void Rejects_a_base_url_on_any_other_authority(string baseUrl)
+    {
+        var options = OptionsFor(LiveTenant.Environment);
+        options.BaseUrl = baseUrl;
+
+        Assert.Throws<InvalidOperationException>(() => LiveTenant.GuardEnvironment(options));
+    }
+
+    /// <summary>
     /// A service root this code cannot parse is one whose environment it cannot verify.
     /// </summary>
     /// <remarks>

@@ -46,9 +46,12 @@ Two independent controls, in order of strength:
 1. **The credential.** The app registration is granted on the sandbox environment only and
    deliberately never added to Production, so a token issued for it is rejected at Production's
    door. This holds regardless of what the code does.
-2. **`LiveTenant.GuardEnvironment`.** Fails before a request leaves the process if the resolved
-   base URL does not name the sandbox. It requires the marker to be *present* rather than testing
-   for the absence of "Production", so a renamed or added environment fails closed.
+2. **`LiveTenant.GuardEnvironment`.** Fails before a request leaves the process unless the resolved
+   base URL is the sandbox, on Business Central's own host, over HTTPS. The host check is not
+   decoration: every request here carries a real access token, and the credential grant above
+   constrains which environment that token opens, not who receives it — so a base URL pointing
+   elsewhere would disclose it whatever the path said. The environment must be *present* rather
+   than "Production" absent, so a renamed or added environment fails closed.
 
 ## What is measured
 

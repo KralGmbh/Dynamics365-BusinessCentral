@@ -130,12 +130,19 @@ public static class LiveTenant
             observer);
     }
 
+    /// <summary>The only host these tests may ever send a token to.</summary>
+    /// <remarks>
+    /// Business Central SaaS. An on-premises or proxied deployment would need this list extended
+    /// deliberately, which is the point: adding a host is a decision, not an accident.
+    /// </remarks>
+    public const string Host = "api.businesscentral.dynamics.com";
+
     /// <summary>
-    /// Throws unless the resolved base URL names <see cref="Environment"/>. Public so the rule
-    /// is assertable directly, without a tenant.
+    /// Throws unless the resolved base URL is the sandbox, on the expected host, over HTTPS.
+    /// Public so the rule is assertable directly, without a tenant.
     /// </summary>
     /// <exception cref="InvalidOperationException">
-    /// The resolved URL does not name the sandbox. Never downgrade this to a warning.
+    /// The resolved URL is not one these tests may contact. Never downgrade this to a warning.
     /// </exception>
     public static void GuardEnvironment(BusinessCentralOptions options)
     {
@@ -148,6 +155,8 @@ public static class LiveTenant
             .Replace("{tenant}", options.TenantId ?? string.Empty, StringComparison.OrdinalIgnoreCase)
             .Replace("{environment}", options.Environment ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
+        GuardAuthority(resolved);
+
         if (EnvironmentOf(resolved) is { } environment &&
             environment.Equals(Environment, StringComparison.OrdinalIgnoreCase))
         {
@@ -159,6 +168,49 @@ public static class LiveTenant
             $"base URL does not carry it in the environment position — expected " +
             $"'.../{{tenant}}/{Environment}/ODataV4', got '{resolved}'. This is a hard guardrail — " +
             "Production is read-only at all times. Fix the configuration; do not relax this check.");
+    }
+
+    /// <summary>
+    /// Rejects any base URL whose scheme or host is not Business Central's.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The environment check alone guards the wrong thing.</b> It reads the path, so
+    /// <c>https://attacker.example/v2.0/{tenant}/KRALTEST/ODataV4</c> satisfies it — and the client
+    /// would then acquire a genuine token and send it as a bearer credential to that origin. The
+    /// app registration's sandbox-only grant does not help: it constrains which Business Central
+    /// environment the token opens, not who receives it. A leaked sandbox token is a leaked
+    /// credential.
+    /// </para>
+    /// <para>
+    /// The package makes exactly this check on continuations for exactly this reason — see
+    /// <c>BusinessCentralClient.EnsureTrustedContinuation</c>, which refuses an
+    /// <c>@odata.nextLink</c> that leaves the configured origin. This is that rule applied to the
+    /// one URL a test controls directly.
+    /// </para>
+    /// <para>
+    /// Host equality, not a suffix test: <c>api.businesscentral.dynamics.com.evil.test</c> ends
+    /// with the expected name and is a different authority entirely. Scheme is checked too, so a
+    /// downgrade to <c>http</c> cannot put the token on the wire in clear text.
+    /// </para>
+    /// </remarks>
+    private static void GuardAuthority(string resolvedBaseUrl)
+    {
+        var isTrusted =
+            Uri.TryCreate(resolvedBaseUrl, UriKind.Absolute, out var uri) &&
+            uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+            uri.Host.Equals(Host, StringComparison.OrdinalIgnoreCase) &&
+            uri.IsDefaultPort;
+
+        if (isTrusted)
+            return;
+
+        throw new InvalidOperationException(
+            $"Live-tenant tests may only send a token to https://{Host}. The resolved base URL " +
+            $"'{resolvedBaseUrl}' is a different authority, and every request these tests make " +
+            "carries a real access token — so pointing them elsewhere discloses that credential " +
+            "whatever the path says. This is a hard guardrail; extend the host deliberately if a " +
+            "different deployment ever needs one.");
     }
 
     /// <summary>
