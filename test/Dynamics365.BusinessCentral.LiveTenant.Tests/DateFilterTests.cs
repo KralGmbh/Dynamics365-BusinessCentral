@@ -101,8 +101,10 @@ public sealed class DateFilterTests(ITestOutputHelper output)
     /// fail with the conversion working correctly.
     /// </para>
     /// <para>
-    /// The tolerance is the sum of what each population was seen to move, and nothing else. When
-    /// that movement outweighs the gap the fact says so and stops rather than asserting on noise.
+    /// The tolerance is the sum of what each population was seen to move, and nothing else. A
+    /// sample where that movement outweighs the gap is <b>inconclusive, and fails</b>: the identity
+    /// still held, but restoring the 1.0 conversion would not have failed such a run, and a fact
+    /// that cannot fail must not report the same green as one that can.
     /// </para>
     /// </remarks>
     [LiveTenantFact]
@@ -165,20 +167,24 @@ public sealed class DateFilterTests(ITestOutputHelper output)
             low, high, localCount,
             "The 1.0 machine-local reading, against the 2.0 reading adjusted by the timezone gap");
 
-        // Whether the two readings can be shown to differ at all. In either direction they are
-        // provably apart when the smallest the gap was seen to be outweighs how far the kindless
-        // population moved. Below that, the identity held but says nothing.
+        // The two readings are provably apart, in either direction, exactly when the smallest the
+        // gap was seen to be outweighs how far the kindless population moved. Below that the
+        // identity above still held, but the run cannot say the 1.0 conversion would have selected
+        // anything different — and an inconclusive sample must not report the same green as a
+        // conclusive one, or the fact stops being able to fail while still passing.
         var gapFloor = gapLow;
         var kindlessDrift = Math.Abs(kindlessAfter - kindlessBefore);
 
-        if (gapFloor > kindlessDrift)
-            Assert.NotEqual(kindlessBefore, localCount);
-        else
-            output.WriteLine(
-                $"The gap ({gapFloor} rows) does not outweigh the {kindlessDrift} rows that moved " +
-                "above the boundary while measuring, so this run cannot say the two readings " +
-                "differ — only that the difference is explained. Not a failure; the identity " +
-                "above still held.");
+        Assert.True(
+            gapFloor > kindlessDrift,
+            $"Inconclusive: the timezone window held {gapFloor} row(s), which does not outweigh " +
+            $"the {kindlessDrift} that moved above the boundary while measuring, so restoring the " +
+            "1.0 conversion would not have failed this run. FindBoundaryAsync places the boundary " +
+            "so the window is never empty, and this suite runs against a tenant quiet enough for " +
+            "the drift to be zero — if that has stopped being true, this fact needs a denser " +
+            "sample, not a softer assertion.");
+
+        Assert.NotEqual(kindlessBefore, localCount);
     }
 
     /// <summary>
@@ -233,10 +239,31 @@ public sealed class DateFilterTests(ITestOutputHelper output)
             .CountAsync();
 
     /// <summary>
-    /// Picks a boundary from the middle of the data: the timestamp of a row roughly in the middle
-    /// of the set when ordered by time, so filters on either side of it match a useful number of
-    /// rows.
+    /// Picks a boundary from the middle of the data whose timezone window is <b>provably</b>
+    /// non-empty.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two properties are needed, and only the first is about being mid-data. A boundary matching
+    /// nothing on one side would compare two identical full-set counts and pass while testing
+    /// nothing, so it is taken from a row well inside the ordered set.
+    /// </para>
+    /// <para>
+    /// The second is what makes both facts in this class able to fail at all. Everything they
+    /// detect is the rows the machine-local shift moves across the boundary — the timezone window
+    /// — so a window that happens to contain no rows makes the 1.0 and 2.0 readings identical and
+    /// the whole class passes with the conversion restored. Sampling a row and hoping its window is
+    /// populated leaves that to the data: the margin on this tenant has been a single row.
+    /// </para>
+    /// <para>
+    /// So the boundary is <i>placed</i> rather than sampled. The window is
+    /// <c>[boundary - offset, boundary)</c> when the local reading lands earlier and
+    /// <c>[boundary, boundary + |offset|)</c> when it lands later; offsetting the sampled row's
+    /// timestamp by whichever direction applies puts that row inside the window by construction.
+    /// One row is the floor, not the expectation — the window is usually far more populated — but
+    /// the floor is what stops the suite ever going quietly non-discriminating.
+    /// </para>
+    /// </remarks>
     private static async Task<DateTime> FindBoundaryAsync(Client.IBusinessCentralClient client)
     {
         // Skip past the sentinel rows (BC's "unset" is 0001-01-01) to a real timestamp.
@@ -255,6 +282,11 @@ public sealed class DateFilterTests(ITestOutputHelper output)
             "with spread-out values; run TenantShapeTests and pick another set rather than " +
             "lowering the skip.");
 
-        return row!.EndingDateTime.UtcDateTime;
+        var sampled = row!.EndingDateTime.UtcDateTime;
+        var offset = TimeZoneInfo.Local.GetUtcOffset(sampled);
+
+        // Place the boundary so the sampled row falls inside the timezone window. Ahead of the row
+        // when the local reading lands earlier, on it when the local reading lands later.
+        return offset > TimeSpan.Zero ? sampled + offset : sampled;
     }
 }
