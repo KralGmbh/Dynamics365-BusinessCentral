@@ -98,13 +98,17 @@ public sealed class ProjectionTests(ITestOutputHelper output)
         Assert.True(rows.GetArrayLength() > 0, "Expected at least one row.");
 
         var names = rows[0].EnumerateObject().Select(p => p.Name).ToArray();
+        var propertyNames = names.Where(n => !n.StartsWith('@')).ToArray();
         output.WriteLine($"asked for {askedSystemId},{askedSerialNo} — $metadata says " +
                          $"{systemId},{serialNo} — answered: {string.Join(", ", names)}");
 
         // The request was accepted at all: that is the case-insensitivity finding.
-        // And it was answered in the casing $metadata publishes, character for character.
-        Assert.Contains(systemId, names, StringComparer.Ordinal);
-        Assert.Contains(serialNo, names, StringComparer.Ordinal);
+        // It restricted the page to exactly those properties rather than silently ignoring the
+        // unrecognized spellings and returning the full entity, and answered in the casing
+        // $metadata publishes, character for character. OData annotations are not properties.
+        Assert.Equal(2, propertyNames.Length);
+        Assert.Contains(systemId, propertyNames, StringComparer.Ordinal);
+        Assert.Contains(serialNo, propertyNames, StringComparer.Ordinal);
     }
 
     /// <summary>

@@ -23,6 +23,13 @@ namespace Dynamics365.BusinessCentral.LiveTenant.Tests;
 public sealed class QueryStringCeilingTests(ITestOutputHelper output)
 {
     /// <summary>
+    /// Adjacent clause counts that put these fixed-width keys immediately below and above the
+    /// tenant's measured 8,099-character boundary.
+    /// </summary>
+    private const int LastAcceptedKeyCount = 125;
+    private const int FirstRejectedKeyCount = LastAcceptedKeyCount + 1;
+
+    /// <summary>
     /// A query string past the ceiling is answered <c>414 URI Too Long</c> — not the opaque 400
     /// the guard's first design assumed.
     /// </summary>
@@ -34,26 +41,33 @@ public sealed class QueryStringCeilingTests(ITestOutputHelper output)
     [LiveTenantFact]
     public async Task An_over_length_query_string_is_answered_414()
     {
+        var wire = new RecordingObserver();
         var client = LiveTenant.CreateClient(o =>
         {
             // Out of the way: this fact is about the gateway, not the guard.
-            o.QueryStringLengthWarningThreshold = 40_000;
+            o.QueryStringLengthWarningThreshold = 1;
             o.MaxQueryStringLength = 50_000;
-        });
+        }, wire);
 
         var exception = await Assert.ThrowsAnyAsync<BusinessCentralException>(() =>
             client.Query<LdatSummaryRow>()
-                .Where(Filter.In<LdatSummaryRow>(x => x.ProductionOrderNo, OverLongKeySet(600)))
+                .Where(Filter.In<LdatSummaryRow>(
+                    x => x.ProductionOrderNo,
+                    OverLongKeySet(FirstRejectedKeyCount)))
                 .ToListAsync());
 
-        output.WriteLine($"over-length query string → {(int)exception.StatusCode} {exception.StatusCode}");
+        var warning = Assert.Single(wire.LengthWarnings);
 
+        output.WriteLine(
+            $"rejected: queryString={warning.QueryStringLength} " +
+            $"orClauses={warning.OrClauseCount} → {(int)exception.StatusCode} {exception.StatusCode}");
+
+        Assert.InRange(warning.QueryStringLength, 8_100, 8_200);
         Assert.Equal(414, (int)exception.StatusCode);
     }
 
     /// <summary>
-    /// A query string just under the package's own refusal threshold is still accepted by the
-    /// gateway.
+    /// A query string immediately below the measured gateway ceiling is still accepted.
     /// </summary>
     /// <remarks>
     /// The other side of the same measurement, and the one that would catch the guard becoming
@@ -61,18 +75,23 @@ public sealed class QueryStringCeilingTests(ITestOutputHelper output)
     /// happily have served.
     /// </remarks>
     [LiveTenantFact]
-    public async Task A_query_string_just_under_the_default_ceiling_is_accepted()
+    public async Task A_query_string_immediately_below_the_gateway_ceiling_is_accepted()
     {
         var wire = new RecordingObserver();
-        var client = LiveTenant.CreateClient(observer: wire);
+        var client = LiveTenant.CreateClient(o =>
+        {
+            // The request intentionally exceeds the package's conservative 8,000-character
+            // default. Raise the guard so this fact can measure the gateway boundary itself.
+            o.QueryStringLengthWarningThreshold = 1;
+            o.MaxQueryStringLength = 50_000;
+        }, wire);
 
-        // 100 keys. Each or-clause costs roughly 65 encoded characters at this field-name and key
-        // length — the field name is repeated per clause and every quote becomes %27 — so this
-        // lands near 6,600: over the 6,000 warning threshold, under the 8,000 refusal, and under
-        // the 8,099 the gateway itself enforces. That per-clause cost is why Filter.In answers a
-        // bulk lookup with chunking advice rather than a bigger limit.
+        // One fewer fixed-width key than the rejected probe. Together the two requests form the
+        // narrowest interval this real filter shape can express around the gateway boundary.
         var rows = await client.Query<LdatSummaryRow>()
-            .Where(Filter.In<LdatSummaryRow>(x => x.ProductionOrderNo, OverLongKeySet(100)))
+            .Where(Filter.In<LdatSummaryRow>(
+                x => x.ProductionOrderNo,
+                OverLongKeySet(LastAcceptedKeyCount)))
             .ToListAsync();
 
         var warning = Assert.Single(wire.LengthWarnings);
@@ -81,8 +100,9 @@ public sealed class QueryStringCeilingTests(ITestOutputHelper output)
             $"accepted: queryString={warning.QueryStringLength} url={warning.UrlLength} " +
             $"orClauses={warning.OrClauseCount} rows={rows.Count}");
 
-        // The band this fact exists to hold open: warned about, sent anyway, served.
-        Assert.InRange(warning.QueryStringLength, 6_000, 8_000);
+        // The band this fact exists to hold open: above the package's conservative default, but
+        // immediately below the measured gateway ceiling, sent and served.
+        Assert.InRange(warning.QueryStringLength, 8_001, 8_099);
         Assert.False(warning.ExceedsLimit);
     }
 

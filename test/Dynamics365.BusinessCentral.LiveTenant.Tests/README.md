@@ -55,11 +55,11 @@ Two independent controls, in order of strength:
 | Fact | What it pins |
 | --- | --- |
 | `TenantShapeTests` | Row counts, date columns, and that these pages honour `$count` — the last of which decides whether `CountAsync` costs one round trip or a full walk |
-| `PagingTests` | A server-issued `@odata.nextLink` is followed, and the full set arrives once each — with and without a client page preference |
-| `DateFilterTests` | A kindless `DateTime` filters as UTC, and how many rows the 1.0 machine-local reading would have moved |
-| `ProjectionTests` | Derived `$select` resolves against `$metadata`; `$select` is case-insensitive and answered in the page's own casing |
+| `PagingTests` | A server-issued `@odata.nextLink` is followed on the wire, and the full set arrives once each — with and without a client page preference |
+| `DateFilterTests` | A kindless `DateTime` filters as UTC, and how many rows the 1.0 machine-local reading would have moved; CI fixes a non-UTC timezone so the comparison discriminates |
+| `ProjectionTests` | Derived `$select` resolves against `$metadata`; wrong-case `$select` is applied and answered in the page's own casing |
 | `SchemaVersionTests` | Native `in` is `501` without `$schemaversion=2.1` and matches the or-chain with it |
-| `QueryStringCeilingTests` | Over-length is answered `414`, and a query string inside the warning band is still served |
+| `QueryStringCeilingTests` | Adjacent query shapes immediately below and above 8,099 are respectively served and answered `414` |
 
 Numbers the tenant owns — the server's Max Page Size, row counts, the exact size of the date shift
 — are **reported, not asserted**. Pinning them would turn an unrelated administrative change into

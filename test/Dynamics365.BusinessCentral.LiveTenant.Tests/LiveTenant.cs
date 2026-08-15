@@ -72,6 +72,23 @@ public static class LiveTenant
     public static bool IsConfigured =>
         IsOptedIn && LiveTenantCredentials.TryLoad() is not null;
 
+    /// <summary>
+    /// Whether this is the scheduled workflow run rather than someone's machine.
+    /// </summary>
+    /// <remarks>
+    /// Used only to turn "this run could not discriminate" from a printed note into a failure —
+    /// see <c>DateFilterTests</c>. A contributor running under UTC has nothing to fix; the
+    /// workflow, which sets <c>TZ</c> precisely so its run does discriminate, does.
+    /// <c>GITHUB_ACTIONS</c> rather than the broader <c>CI</c>: the condition being detected is
+    /// specifically "this is the job that <c>live-tenant.yml</c> configures", and a shell that
+    /// happens to export <c>CI</c> is not that.
+    /// </remarks>
+    public static bool IsGitHubActions =>
+        string.Equals(
+            System.Environment.GetEnvironmentVariable("GITHUB_ACTIONS"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Whether the opt-in variable is set to something other than a falsy value.</summary>
     public static bool IsOptedIn =>
         System.Environment.GetEnvironmentVariable(OptInVariable) is { Length: > 0 } value &&

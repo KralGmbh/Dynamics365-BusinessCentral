@@ -53,7 +53,8 @@ reported rather than asserted, so an administrative change cannot masquerade as 
 - The live-tenant evidence is hardened against mutable data and quietly vacuous probes: paired
   filter reads are bracketed, incomplete shape probes no longer count as successes, credential
   checks reject whitespace-only values, and case-insensitivity probes always change the requested
-  casing.
+  casing and prove the projection was applied. The scheduled run fixes a non-UTC timezone, paging
+  is verified from the continuation request itself, and URI probes straddle the measured ceiling.
 - The SonarCloud coverage step is scoped to the unit-test project rather than the solution. The
   live-tenant project targets `net10.0` only — one tenant round trip per fact is enough, and what
   differs between TFMs is the compiled surface, which the correctness gate and package validation

@@ -109,19 +109,23 @@ public sealed class PagingTests(ITestOutputHelper output)
     [LiveTenantFact]
     public async Task Server_pages_on_its_own_and_the_client_follows_the_continuation()
     {
-        var client = LiveTenant.CreateClient();
+        var wire = new RecordingObserver();
+        var client = LiveTenant.CreateClient(observer: wire);
 
         var before = await client.Query<SalesLine>().CountAsync();
 
         // One request, no page preference: whatever comes back is the server's own page.
         var firstPage = await client.Query<SalesLine>().ToPageAsync();
 
+        wire.Clear();
         var rows = await client.Query<SalesLine>().ToAllAsync();
+        var pageRequests = wire.Requests.ToArray();
 
         var after = await client.Query<SalesLine>().CountAsync();
 
         output.WriteLine($"LDATSalesLine: $count={before}..{after}, server page={firstPage.Items.Count}, " +
-                         $"nextLink={(firstPage.HasMore ? "issued" : "none")}, fetched={rows.Count}");
+                         $"nextLink={(firstPage.HasMore ? "issued" : "none")}, fetched={rows.Count} " +
+                         $"in {pageRequests.Length} requests");
 
         Assert.True(
             firstPage.HasMore,
@@ -130,6 +134,14 @@ public sealed class PagingTests(ITestOutputHelper output)
             $"larger entity set rather than weakening this assertion.");
 
         Assert.True(firstPage.Items.Count < before);
+
+        Assert.True(
+            pageRequests.Length > 1,
+            "ToAllAsync made no follow-up request, so it did not follow a continuation.");
+
+        var continuationQuery = Uri.UnescapeDataString(new Uri(pageRequests[1]).Query);
+        Assert.Contains("$skiptoken=", continuationQuery, StringComparison.Ordinal);
+        Assert.DoesNotContain("$skip=", continuationQuery, StringComparison.Ordinal);
 
         LiveTenantAssert.WithinBracket(before, after, rows.Count, "Paged read of LDATSalesLine");
         Assert.Equal(rows.Count, rows.Select(r => r.SystemId).Distinct().Count());

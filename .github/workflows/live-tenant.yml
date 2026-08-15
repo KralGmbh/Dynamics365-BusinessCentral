@@ -59,6 +59,9 @@ jobs:
         env:
           # Credentials alone do not run the live facts — see LiveTenant.OptInVariable.
           BC_LIVE_TENANT_TESTS: '1'
+          # The DateTime regression is a machine-local conversion. A UTC runner makes the old
+          # and new behaviours identical and would let that fact pass without discriminating.
+          TZ: Europe/Vienna
           BC_TENANT_ID: ${{ vars.BC_TENANT_ID }}
           BC_CLIENT_ID: ${{ vars.BC_CLIENT_ID }}
           BC_CLIENT_SECRET: ${{ secrets.BC_CLIENT_SECRET }}

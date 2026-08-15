@@ -50,6 +50,9 @@ public sealed class DateFilterTests(ITestOutputHelper output)
         var client = LiveTenant.CreateClient();
 
         var boundary = await FindBoundaryAsync(client);
+
+        RequireADiscriminatingClock(TimeZoneInfo.Local.GetUtcOffset(boundary));
+
         var kindless = DateTime.SpecifyKind(boundary, DateTimeKind.Unspecified);
         var utc = DateTime.SpecifyKind(boundary, DateTimeKind.Utc);
 
@@ -83,8 +86,8 @@ public sealed class DateFilterTests(ITestOutputHelper output)
     /// <para>
     /// It is inert on a machine running UTC — where local and UTC are the same instant and there
     /// is nothing to measure — so it reports and returns rather than asserting a difference that
-    /// cannot exist. CI runners are usually UTC; a developer machine in Vienna is where this one
-    /// actually bites, which is exactly the asymmetry that let the 1.0 bug survive.
+    /// cannot exist. The scheduled workflow fixes <c>TZ=Europe/Vienna</c> so its run always
+    /// discriminates; the early return remains useful for an ordinary local run under UTC.
     /// </para>
     /// <para>
     /// Four counts, so the identity being checked — that the difference between the two readings
@@ -100,6 +103,8 @@ public sealed class DateFilterTests(ITestOutputHelper output)
 
         var boundary = await FindBoundaryAsync(client);
         var offset = TimeZoneInfo.Local.GetUtcOffset(boundary);
+
+        RequireADiscriminatingClock(offset);
 
         if (offset == TimeSpan.Zero)
         {
@@ -147,6 +152,33 @@ public sealed class DateFilterTests(ITestOutputHelper output)
                 "difference is explained. Not a failure; the identity above still held.");
         else
             Assert.NotEqual(kindlessBefore, localCount);
+    }
+
+    /// <summary>
+    /// Fails a workflow run whose clock cannot tell the two interpretations apart.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Under a UTC clock, <see cref="DateTime.ToUniversalTime"/> leaves a kindless value alone, so
+    /// the 1.0 and 2.0 readings are the same instant and <b>both</b> facts in this class pass
+    /// whichever one the package implements. That is fine on a contributor's machine — nothing is
+    /// claimed and nothing is broken — and unacceptable in the scheduled run, which exists to fail
+    /// if the conversion comes back.
+    /// </para>
+    /// <para>
+    /// The workflow sets <c>TZ</c> for exactly this reason, which makes the guarantee one deleted
+    /// YAML line thick. This turns that deletion into a failure naming the cause, rather than a
+    /// green run that quietly stopped measuring — the same reason the credential check exists
+    /// beside a suite that skips.
+    /// </para>
+    /// </remarks>
+    private static void RequireADiscriminatingClock(TimeSpan offset)
+    {
+        Assert.False(
+            offset == TimeSpan.Zero && LiveTenant.IsGitHubActions,
+            "This run's clock is UTC, so the 1.0 machine-local conversion and the 2.0 reading are " +
+            "the same instant and neither fact in this class can fail. The workflow must run these " +
+            "under a non-UTC zone — see TZ in .github/workflows/live-tenant.yml.");
     }
 
     private static Task<long> CountFromAsync(Client.IBusinessCentralClient client, DateTime from) =>
