@@ -7,7 +7,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [2.0.0] - 2026-08-12
+## [2.0.0] - 2026-08-15
 
 **Stable.** The API is unchanged from `2.0.0-rc.1`. What changed is the evidence behind it: the
 behaviours this release is built on are now measured by a test suite that runs against a real
@@ -51,10 +51,11 @@ reported rather than asserted, so an administrative change cannot masquerade as 
 - `PackageValidationBaselineVersion` moves to `2.0.0-rc.1` on both packages, making the release
   candidate the compatibility baseline for the stable release.
 - The live-tenant evidence is hardened against mutable data and quietly vacuous probes: paired
-  filter reads are bracketed, incomplete shape probes no longer count as successes, credential
-  checks reject whitespace-only values, and case-insensitivity probes always change the requested
-  casing and prove the projection was applied. The scheduled run fixes a non-UTC timezone, paging
-  is verified from the continuation request itself, and URI probes straddle the measured ceiling.
+  filter reads are bracketed — including both separately moving populations in the timezone
+  comparison — incomplete shape probes no longer count as successes, credential checks reject
+  whitespace-only values, and case-insensitivity probes always change the requested casing and
+  prove the projection was applied. The scheduled run fixes a non-UTC timezone, paging is verified
+  from the continuation request itself, and URI probes straddle the measured ceiling.
 - The SonarCloud coverage step is scoped to the unit-test project rather than the solution. The
   live-tenant project targets `net10.0` only — one tenant round trip per fact is enough, and what
   differs between TFMs is the compiled surface, which the correctness gate and package validation
